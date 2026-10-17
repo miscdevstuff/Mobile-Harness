@@ -102,6 +102,7 @@ import com.jarves.mh.model.ProviderKind
 import com.jarves.mh.model.ProviderProfile
 import com.jarves.mh.model.defaultDshApiForProvider
 import com.jarves.mh.model.inferredDshApiForUrl
+import com.jarves.mh.model.isKeylessAllowed
 import com.jarves.mh.model.providersForAgent
 import com.jarves.mh.network.ConnectionValidation
 import com.jarves.mh.network.DiscoveredModel
@@ -195,24 +196,26 @@ fun AgentScreen(
 ) {
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
-    var selectedKind by rememberSaveable(state.provider.kind) { mutableStateOf(state.provider.kind) }
+    var selectedKind by rememberSaveable(state.agentKind, state.provider.kind) { mutableStateOf(state.provider.kind) }
     val selectedProviderTitle = stringResource(selectedKind.titleRes())
     val selectedProviderVerifiedMessage = stringResource(
         R.string.agent_connection_verified,
         selectedProviderTitle,
     )
     val verifiedStatusLabel = stringResource(R.string.agent_status_verified)
-    var baseUrl by rememberSaveable(state.provider.baseUrl) { mutableStateOf(state.provider.baseUrl) }
-    var model by rememberSaveable(state.provider.model) { mutableStateOf(state.provider.model) }
-    var dshApi by rememberSaveable(state.provider.dshApi) { mutableStateOf(state.provider.dshApi) }
-    var openRouterProviderOrder by rememberSaveable(state.provider.openRouterProviderOrder) {
+    var baseUrl by rememberSaveable(state.agentKind, state.provider.baseUrl) { mutableStateOf(state.provider.baseUrl) }
+    var model by rememberSaveable(state.agentKind, state.provider.model) { mutableStateOf(state.provider.model) }
+    var dshApi by rememberSaveable(state.agentKind, state.provider.dshApi) { mutableStateOf(state.provider.dshApi) }
+    var openRouterProviderOrder by rememberSaveable(state.agentKind, state.provider.openRouterProviderOrder) {
         mutableStateOf(state.provider.openRouterProviderOrder)
     }
-    var openRouterAllowFallbacks by rememberSaveable(state.provider.openRouterAllowFallbacks) {
+    var openRouterAllowFallbacks by rememberSaveable(state.agentKind, state.provider.openRouterAllowFallbacks) {
         mutableStateOf(state.provider.openRouterAllowFallbacks)
     }
-    var apiKey by rememberSaveable(selectedKind) { mutableStateOf(getSavedApiKey(selectedKind)) }
-    var savedKeys by remember(selectedKind, state.activeApiKeyName) {
+    var apiKey by rememberSaveable(state.agentKind, selectedKind, state.activeApiKeyName) {
+        mutableStateOf(getSavedApiKey(selectedKind))
+    }
+    var savedKeys by remember(state.agentKind, selectedKind, state.activeApiKeyName) {
         mutableStateOf(getSavedApiKeys(selectedKind))
     }
     var newKeyName by rememberSaveable(selectedKind) { mutableStateOf("") }
@@ -277,6 +280,7 @@ fun AgentScreen(
     fun discoverModels() {
         val effectiveKey = apiKey.trim().ifBlank { newApiKey.trim() }
         val supportsPublicDiscovery = selectedKind == ProviderKind.LLM_ROUTER ||
+            selectedKind == ProviderKind.OPENCODE_CLI ||
             selectedKind == ProviderKind.OPENCODE_ZEN ||
             selectedKind == ProviderKind.CUSTOM // self-hosted servers often need no key
         if (effectiveKey.isBlank() && !supportsPublicDiscovery) {
@@ -647,12 +651,18 @@ fun AgentScreen(
                                         verticalAlignment = Alignment.CenterVertically,
                                     ) {
                                         Column(Modifier.weight(1f)) {
-                                            Text(
-                                                opt.displayName,
-                                                fontWeight = FontWeight.SemiBold,
-                                                fontSize = 14.sp,
-                                                color = if (isSelected) PocketOrange else MaterialTheme.colorScheme.onSurface,
-                                            )
+                                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                                Text(
+                                                    opt.displayName,
+                                                    fontWeight = FontWeight.SemiBold,
+                                                    fontSize = 14.sp,
+                                                    color = if (isSelected) PocketOrange else MaterialTheme.colorScheme.onSurface,
+                                                )
+                                                if (opt.isFree) {
+                                                    Spacer(Modifier.width(6.dp))
+                                                    Text(stringResource(R.string.st_free), color = Color(0xFF58C99C), fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                                                }
+                                            }
                                             Text(
                                                 opt.id,
                                                 fontSize = 11.sp,
@@ -830,7 +840,7 @@ fun AgentScreen(
             contentPadding = PaddingValues(horizontal = 16.dp, vertical = 10.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
-            // ── 1. Compact 3-Way Segmented Engine Selector ──
+            // ── 1. Compact Segmented Engine Selector ──
             item {
                 Column(modifier = Modifier.fillMaxWidth()) {
                     Surface(
@@ -851,7 +861,8 @@ fun AgentScreen(
                                 val shortTitle = when (agent) {
                                     AgentKind.ANTIGRAVITY -> "Antigravity"
                                     AgentKind.DEEPSEEK_HARNESS -> "DeepSeek"
-                                    AgentKind.CLAUDE_CODE -> "Claude Code"
+                                    AgentKind.CLAUDE_CODE -> "Claude"
+                                    AgentKind.OPENCODE -> "OpenCode"
                                 }
                                 Surface(
                                     shape = RoundedCornerShape(12.dp),
@@ -872,9 +883,10 @@ fun AgentScreen(
                                             Text(
                                                 shortTitle,
                                                 fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-                                                fontSize = 12.sp,
+                                                fontSize = 11.5.sp,
                                                 color = if (isSelected) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
                                                 maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis,
                                             )
                                             if (updateAvailable) {
                                                 Spacer(Modifier.width(3.dp))
@@ -942,13 +954,7 @@ fun AgentScreen(
                             }
                         }
                     } else if (!viewedAgentInstalled) {
-                        val viewedAgentTitle = stringResource(
-                            when (viewedAgent) {
-                                AgentKind.CLAUDE_CODE -> R.string.agent_title_claude
-                                AgentKind.DEEPSEEK_HARNESS -> R.string.agent_title_deepseek
-                                AgentKind.ANTIGRAVITY -> R.string.agent_title_antigravity
-                            },
-                        )
+                        val viewedAgentTitle = stringResource(viewedAgent.titleRes())
                         Spacer(Modifier.height(8.dp))
                         Surface(
                             shape = RoundedCornerShape(14.dp),
@@ -1894,7 +1900,7 @@ private fun AgentProviderCard(
             Spacer(Modifier.height(12.dp))
             OutlinedButton(
                 onClick = onValidate,
-                enabled = (apiKey.isNotBlank() || selectedKind == ProviderKind.CUSTOM) && !isDiscovering && !isValidating &&
+                enabled = (apiKey.isNotBlank() || selectedKind.isKeylessAllowed(model)) && !isDiscovering && !isValidating &&
                     (selectedKind == ProviderKind.CLAUDE || (baseUrl.isNotBlank() && model.isNotBlank())),
                 modifier = Modifier.fillMaxWidth().height(46.dp),
                 shape = RoundedCornerShape(13.dp),
@@ -2165,6 +2171,14 @@ private fun AgentSelectionDot(selected: Boolean) {
 private fun defaultModelsForProvider(kind: ProviderKind, context: android.content.Context): List<DiscoveredModel> = when (kind) {
     ProviderKind.DEEPSEEK -> listOf(
         DiscoveredModel("deepseek-v4-flash", "DeepSeek-V4 Flash"),
+    )
+    ProviderKind.OPENCODE_CLI -> listOf(
+        DiscoveredModel("mimo-v2.6-flash-free", "MiMo-V2.6-Flash Free", isFree = true),
+        DiscoveredModel("deepseek-v4.1-flash-free", "DeepSeek V4.1 Flash Free", isFree = true),
+        DiscoveredModel("big-pickle", "Big Pickle", isFree = true),
+        DiscoveredModel("nemotron-3-ultra-free", "Nemotron 3 Ultra Free", isFree = true),
+        DiscoveredModel("qwen3.6-plus", "Qwen3.6 Plus"),
+        DiscoveredModel("claude-sonnet-4-6", "Claude Sonnet 4.6"),
     )
     ProviderKind.OPENCODE_ZEN -> listOf(
         DiscoveredModel(ProviderKind.OPENCODE_ZEN.defaultModel, context.getString(R.string.md_model_opencode_default)),

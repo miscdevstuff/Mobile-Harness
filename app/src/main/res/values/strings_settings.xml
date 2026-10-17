@@ -101,7 +101,7 @@
     <string name="st_tier_stable">Stable</string>
     <string name="st_toggle_visibility">Toggle visibility</string>
     <string name="st_token_name">Token name</string>
-    <string name="st_tools_included_note">Node.js, npm, Git, and Claude Code are included.</string>
+    <string name="st_tools_included_note">Node.js, npm, and Git are included with the core runtime.</string>
     <string name="st_transfer_progress">%1$s of %2$s</string>
     <string name="st_transfer_speed_eta">%1$s · %2$s left</string>
     <string name="st_update_agent">Update %1$s</string>

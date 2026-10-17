@@ -92,7 +92,7 @@ Mobile Harness unites modern **Jetpack Compose UI** with a self-contained **Ubun
   <tr>
     <td width="50%" valign="top">
       <h3>Autonomous Agent Coding</h3>
-      <p>Native integrations with Claude Code, DeepSeek Harness, and Antigravity CLI. Each agent has an isolated driver, settings, and resumable project conversations.</p>
+      <p>Native integrations with Claude Code, DeepSeek Harness, Antigravity CLI, and OpenCode. Each agent has an isolated driver, settings, and resumable project conversations.</p>
     </td>
     <td width="50%" valign="top">
       <h3>Isolated Linux Subsystem</h3>
@@ -215,9 +215,12 @@ Mobile Harness uses Claude Code's Anthropic-compatible API protocol. You can con
 | Provider | Integration Type | Streaming | Tool Calling | Status | Notes |
 | :--- | :---: | :---: | :---: | :---: | :--- |
 | **Anthropic API** | Direct Key | Supported | Supported | `Recommended` | Primary supported backend |
+| **OpenCode Zen (Official CLI)** | Official CLI | Supported | Supported | `Supported` | Free (keyless) & paid models via OpenCode v2 CLI |
+| **OpenCode Zen (HTTP API)** | Gateway | Supported | Supported | `Supported` | Paid models via OpenCode Zen HTTP gateway |
 | **OpenRouter** | Gateway | Supported | Supported | `Supported` | Routes compatible models through one API key |
 | **DeepSeek** | Direct Key | Supported | Supported | `Supported` | Anthropic-compatible endpoint |
 | **Kimi** | Direct Key | Supported | Supported | `Supported` | Anthropic-compatible Moonshot endpoint |
+| **NVIDIA NIM** | Gateway | Supported | Supported | `Supported` | OpenAI-compatible models hosted by NVIDIA |
 | **Custom API** | Endpoint Override | Compatible | Compatible | `Experimental` | User-configured gateway |
 
 > [!NOTE]
@@ -227,9 +230,10 @@ Mobile Harness uses Claude Code's Anthropic-compatible API protocol. You can con
 
 | Agent | Authentication | Installation | Isolation |
 | :--- | :--- | :--- | :--- |
-| **Claude Code** | Claude account or API-key providers | Included in Core | Existing Claude bridge and settings |
-| **DeepSeek Harness** | API-key providers | On demand | Existing DSH bridge and settings |
-| **Antigravity CLI** | Official Google OAuth flow | Version-pinned online download | Dedicated `agy` bridge, model, effort, and conversation IDs |
+| **Claude Code** | Claude account or API-key providers | On demand / Included in Offline | Dedicated Claude bridge and settings |
+| **DeepSeek Harness** | API-key providers | On demand | Dedicated DSH bridge and settings |
+| **Antigravity CLI** | Official Google OAuth flow | Bundled / version-pinned | Dedicated `agy` bridge, model, effort, and conversation IDs |
+| **OpenCode** | Free models (keyless) or API-key providers | Official v2 installer on demand | Dedicated `opencode` v2 standalone bridge and session IDs |
 
 For Antigravity, select **Antigravity CLI**, install it, and tap **Sign in with Google**. Mobile Harness starts the official CLI login, opens the freshly generated Google URL in the system browser, and sends the returned one-time code back to that waiting process. The app does not embed Google login in a WebView and does not construct its own OAuth request.
 
@@ -255,7 +259,7 @@ flowchart TB
 
     subgraph Subsystem[" Private Linux Subsystem (PRoot ARM64) "]
         Ubuntu["Ubuntu 20.04 LTS Subsystem<br/>Rootless Userspace Environment"]
-        Agent["Agent Registry<br/>Claude • DeepSeek • Antigravity"]
+        Agent["Agent Registry<br/>Claude • DeepSeek • Antigravity • OpenCode"]
         Tools["Development Toolchains<br/>Node.js • Git • Python • C++"]
         Workspace["Local Project Workspace<br/>Files • Git History • Checkpoints"]
     end
@@ -285,7 +289,7 @@ flowchart TB
 
 ### Core Runtime Components
 * **Base Environment**: Ubuntu 20.04 ARM64 verified rootfs
-* **Agent Engine**: Registry-selected, isolated drivers for Claude Code, DeepSeek Harness, and the official Antigravity CLI
+* **Agent Engine**: Registry-selected, isolated drivers for Claude Code, DeepSeek Harness, Antigravity CLI, and OpenCode
 * **Native Tooling**: Node.js LTS, npm, Git, OpenSSL, curl, and GNU coreutils
 * **Process Virtualization**: PRoot user-space architecture emulation with zero kernel modifications
 

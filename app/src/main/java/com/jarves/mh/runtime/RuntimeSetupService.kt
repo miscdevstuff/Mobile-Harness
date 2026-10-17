@@ -149,10 +149,17 @@ object RuntimeSetupController {
     @Synchronized
     fun fail(context: Context, error: Throwable) {
         val causes = generateSequence(error as Throwable?) { it.cause }.toList()
-        val offline = causes.any {
-            it is UnknownHostException ||
-                it.message.orEmpty().contains("unable to resolve host", true) ||
-                it.message.orEmpty().contains("no address associated with hostname", true)
+        val offline = causes.any { cause ->
+            val msg = cause.message.orEmpty()
+            cause is UnknownHostException ||
+                msg.contains("unable to resolve host", true) ||
+                msg.contains("no address associated with hostname", true) ||
+                msg.contains("temporary failure in name resolution", true) ||
+                msg.contains("network is unreachable", true) ||
+                msg.contains("failed to connect to", true) ||
+                msg.contains("connection timed out", true) ||
+                msg.contains("ssl connection timeout", true) ||
+                listOf("curl: (6)", "curl: (7)", "curl: (28)", "curl: (35)", "curl: (56)").any { msg.contains(it, true) }
         }
         val interruptedDpkg = causes.any {
             it.message.orEmpty().contains("dpkg was interrupted", true) ||

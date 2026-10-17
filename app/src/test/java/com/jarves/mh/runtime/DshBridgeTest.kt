@@ -329,6 +329,11 @@ class DshRouteMapperTest {
     fun claudeSubscriptionIsRejected() {
         DshRouteMapper.forProfile(ProviderProfile(ProviderKind.CLAUDE))
     }
+
+    @Test(expected = IllegalArgumentException::class)
+    fun opencodeCliProviderIsRejectedByDsh() {
+        DshRouteMapper.forProfile(ProviderProfile(ProviderKind.OPENCODE_CLI))
+    }
 }
 
 class AgentProviderPresetTest {
@@ -361,6 +366,16 @@ class AgentProviderPresetTest {
     }
 
     @Test
+    fun openCodeCliPresetIsLocked() {
+        val cli = ProviderKind.OPENCODE_CLI
+        assertEquals("https://opencode.ai/inference/v1", cli.defaultBaseUrl)
+        assertEquals("mimo-v2.6-flash-free", cli.defaultModel)
+        assertTrue(cli.fixedBaseUrl)
+        assertTrue(cli.fixedProtocol)
+        assertEquals("https://opencode.ai/inference/v1", ProviderProfile(cli).resolvedBaseUrl)
+    }
+
+    @Test
     fun storedDriftCannotOverrideFixedUrl() {
         val profile = ProviderProfile(ProviderKind.OPENCODE_ZEN, baseUrl = "https://evil.example/", model = "x")
         assertEquals("https://opencode.ai/zen/v1", profile.resolvedBaseUrl)
@@ -374,8 +389,9 @@ class AgentProviderPresetTest {
     }
 
     @Test
-    fun dshHarnessExcludesClaudeSubscription() {
+    fun dshHarnessExcludesClaudeSubscriptionAndCliOnlyProvider() {
         assertFalse(ProviderKind.CLAUDE in DEEPSEEK_HARNESS_PROVIDERS)
+        assertFalse(ProviderKind.OPENCODE_CLI in DEEPSEEK_HARNESS_PROVIDERS)
         assertTrue(ProviderKind.OPENCODE_ZEN in DEEPSEEK_HARNESS_PROVIDERS)
         assertTrue(ProviderKind.DEEPSEEK in DEEPSEEK_HARNESS_PROVIDERS)
         assertTrue(ProviderKind.NVIDIA_NIM in DEEPSEEK_HARNESS_PROVIDERS)
@@ -383,16 +399,22 @@ class AgentProviderPresetTest {
     }
 
     @Test
-    fun openCodeZenIsOnlyShownForDeepSeekHarness() {
+    fun openCodeProvidersAreScopedByAgentCapability() {
         assertTrue(ProviderKind.OPENCODE_ZEN in providersForAgent(AgentKind.DEEPSEEK_HARNESS))
+        assertFalse(ProviderKind.OPENCODE_CLI in providersForAgent(AgentKind.DEEPSEEK_HARNESS))
+        assertTrue(ProviderKind.OPENCODE_CLI in providersForAgent(AgentKind.OPENCODE))
+        assertTrue(ProviderKind.OPENCODE_ZEN in providersForAgent(AgentKind.OPENCODE))
         assertFalse(ProviderKind.OPENCODE_ZEN in providersForAgent(AgentKind.CLAUDE_CODE))
+        assertFalse(ProviderKind.OPENCODE_CLI in providersForAgent(AgentKind.CLAUDE_CODE))
     }
 
     @Test
     fun agentKindsAreStable() {
         assertEquals(AgentKind.CLAUDE_CODE, AgentKind.valueOf("CLAUDE_CODE"))
         assertEquals(AgentKind.DEEPSEEK_HARNESS, AgentKind.valueOf("DEEPSEEK_HARNESS"))
+        assertEquals(AgentKind.OPENCODE, AgentKind.valueOf("OPENCODE"))
         assertEquals(AgentKind.ANTIGRAVITY, AgentKind.fromStored("antigravity"))
+        assertEquals(AgentKind.OPENCODE, AgentKind.fromStored("opencode"))
         assertEquals(AgentKind.CLAUDE_CODE, AgentKind.fromStored("CLAUDE_CODE"))
         assertEquals(AgentKind.DEEPSEEK_HARNESS, AgentKind.fromStored("DEEPSEEK_HARNESS"))
     }

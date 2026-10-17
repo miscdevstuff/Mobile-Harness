@@ -74,6 +74,7 @@ class RuntimeInstaller(private val context: Context) {
     private val devStacksFile = File(rootfs, ".pocket-dev-stacks.json")
     private val dshMarker = File(rootfs, ".pocket-dsh-version")
     private val agyMarker = File(rootfs, ".pocket-agy-version")
+    private val opencodeMarker = File(rootfs, ".pocket-opencode-version")
     private val githubCliMarker = File(rootfs, ".pocket-github-cli-version")
     private val dshAndroidCompatibilityMarker = File(rootfs, ".pocket-dsh-android-compat-version")
     private val macosMetadataRepairMarker = File(rootfs, ".pocket-macos-metadata-repair")
@@ -215,7 +216,7 @@ class RuntimeInstaller(private val context: Context) {
         if (coreNeeded) {
             aptInstall(
                 proot,
-                listOf("git", "ca-certificates"),
+                listOf("git", "ca-certificates", "curl"),
                 str(R.string.rt_install_git_base_tools),
                 0.70f,
                 onProgress,
@@ -236,6 +237,7 @@ class RuntimeInstaller(private val context: Context) {
             com.jarves.mh.model.AgentKind.CLAUDE_CODE -> ensureClaudeInstalled(proot, 0.985f, onProgress)
             com.jarves.mh.model.AgentKind.DEEPSEEK_HARNESS -> ensureDshInstalled(proot, 0.985f, onProgress)
             com.jarves.mh.model.AgentKind.ANTIGRAVITY -> ensureAgyInstalled(proot, 0.985f, onProgress)
+            com.jarves.mh.model.AgentKind.OPENCODE -> ensureOpencodeInstalled(proot, 0.985f, onProgress)
         }
         onProgress(RuntimeInstallProgress(str(R.string.rt_install_setup_complete), 1f))
         return InstalledRuntime(proot, rootfs)
@@ -255,6 +257,7 @@ class RuntimeInstaller(private val context: Context) {
             com.jarves.mh.model.AgentKind.CLAUDE_CODE -> ensureClaudeInstalled(runtime.proot, 0.05f, onProgress)
             com.jarves.mh.model.AgentKind.DEEPSEEK_HARNESS -> ensureDshInstalled(runtime.proot, 0.05f, onProgress)
             com.jarves.mh.model.AgentKind.ANTIGRAVITY -> ensureAgyInstalled(runtime.proot, 0.05f, onProgress)
+            com.jarves.mh.model.AgentKind.OPENCODE -> ensureOpencodeInstalled(runtime.proot, 0.05f, onProgress)
         }
         onProgress(RuntimeInstallProgress(str(R.string.rt_install_ready, agent.localizedTitle(context)), 1f))
     }
@@ -274,6 +277,10 @@ class RuntimeInstaller(private val context: Context) {
             com.jarves.mh.model.AgentKind.ANTIGRAVITY -> isInstalled() &&
                 File(rootfs, AGY_GUEST_PATH.removePrefix("/")).canExecute() &&
                 !agyMarker.readTextOrNull().isNullOrBlank()
+            com.jarves.mh.model.AgentKind.OPENCODE -> isInstalled() &&
+                File(rootfs, OPENCODE_HOME_BIN_REL_PATH).canExecute() &&
+                File(rootfs, OPENCODE_GUEST_PATH.removePrefix("/")).canExecute() &&
+                !opencodeMarker.readTextOrNull().isNullOrBlank()
         }
     }
 
@@ -285,6 +292,8 @@ class RuntimeInstaller(private val context: Context) {
     }
 
     val agyVersion: String get() = agyMarker.readTextOrNull().orEmpty()
+
+    val opencodeVersion: String get() = opencodeMarker.readTextOrNull().orEmpty()
 
     val githubCliVersion: String get() = githubCliMarker.readTextOrNull().orEmpty()
 
@@ -362,6 +371,11 @@ class RuntimeInstaller(private val context: Context) {
             ?.trim()
             ?.takeIf { it.isNotEmpty() && File(rootfs, AGY_GUEST_PATH.removePrefix("/")).canExecute() }
             ?.let { put(com.jarves.mh.model.AgentKind.ANTIGRAVITY, it) }
+
+        opencodeMarker.readTextOrNull()
+            ?.trim()
+            ?.takeIf { isAgentInstalled(com.jarves.mh.model.AgentKind.OPENCODE) }
+            ?.let { put(com.jarves.mh.model.AgentKind.OPENCODE, it) }
     }
 
     /** Checks each installed agent against its own authoritative release source. */
@@ -389,6 +403,12 @@ class RuntimeInstaller(private val context: Context) {
                         put(com.jarves.mh.model.AgentKind.ANTIGRAVITY, AgentUpdateInfo(current, latest))
                     }
             }
+            installed[com.jarves.mh.model.AgentKind.OPENCODE]?.let { current ->
+                runCatching { fetchLatestOpencodeV2Version() }.getOrNull()
+                    ?.takeIf { isVersionNewer(it, current) }?.let { latest ->
+                        put(com.jarves.mh.model.AgentKind.OPENCODE, AgentUpdateInfo(current, latest))
+                    }
+            }
         }
     }
 
@@ -402,6 +422,7 @@ class RuntimeInstaller(private val context: Context) {
             com.jarves.mh.model.AgentKind.CLAUDE_CODE -> updateClaude(runtime, expectedVersion, onProgress)
             com.jarves.mh.model.AgentKind.DEEPSEEK_HARNESS -> updateDsh(runtime, expectedVersion, onProgress)
             com.jarves.mh.model.AgentKind.ANTIGRAVITY -> updateAgy(runtime, expectedVersion, onProgress)
+            com.jarves.mh.model.AgentKind.OPENCODE -> updateOpencode(runtime, expectedVersion, onProgress)
         }
         onProgress(RuntimeInstallProgress(str(R.string.rt_install_version_ready, agent.localizedTitle(context), expectedVersion), 1f, event = RuntimeInstallEvent.COMPLETED))
     }
@@ -527,6 +548,46 @@ class RuntimeInstaller(private val context: Context) {
         dshAndroidCompatibilityMarker.writeText(DSH_ANDROID_COMPATIBILITY_VERSION)
     }
 
+    private suspend fun updateOpencode(
+        runtime: InstalledRuntime,
+        expectedVersion: String,
+        onProgress: suspend (RuntimeInstallProgress) -> Unit,
+    ) {
+        writeResolver()
+        onProgress(RuntimeInstallProgress(str(R.string.rt_install_installing_version, "OpenCode", expectedVersion), 0.25f, indeterminate = true))
+        runGuestCommand(
+            proot = runtime.proot,
+            command = "set -e; " +
+                "($OPENCODE_GUEST_PATH upgrade || curl -fsSL https://opencode.ai/v2/install | bash); " +
+                "mkdir -p /usr/local/bin; " +
+                "if [ -x /root/.opencode/bin/opencode ]; then ln -sf ../../../root/.opencode/bin/opencode $OPENCODE_GUEST_PATH; fi; test -x $OPENCODE_GUEST_PATH; " +
+                "$OPENCODE_GUEST_PATH service set disabled true >/dev/null 2>&1 || true",
+            displayCommand = "opencode upgrade",
+            fraction = 0.75f,
+            timeoutMs = 15 * 60 * 1_000L,
+            onProgress = onProgress,
+            failureMessage = str(R.string.rt_install_update_verify_failed, "OpenCode"),
+        )
+        val installedVer = probeOpencodeVersion(runtime.proot).ifBlank { expectedVersion }
+        opencodeMarker.writeText(installedVer)
+    }
+
+    private fun fetchLatestOpencodeV2Version(): String? {
+        val latest = runCatching {
+            JSONObject(fetchText("https://registry.npmjs.org/@opencode/cli/latest")).optString("version")
+        }.getOrNull()
+        if (!latest.isNullOrBlank() && latest.startsWith("2.")) return latest
+        val root = JSONObject(fetchText("https://registry.npmjs.org/@opencode/cli"))
+        val tags = root.optJSONObject("dist-tags")
+        if (tags != null) {
+            for (key in listOf("latest", "v2", "next")) {
+                val candidate = tags.optString(key)
+                if (candidate.startsWith("2.")) return candidate
+            }
+        }
+        return null
+    }
+
     private fun fetchAgyManifest(): JSONObject = JSONObject(
         fetchText("https://antigravity-cli-auto-updater-974169037036.us-central1.run.app/manifests/linux_arm64.json"),
     )
@@ -633,6 +694,69 @@ class RuntimeInstaller(private val context: Context) {
         require(isAgentInstalled(com.jarves.mh.model.AgentKind.DEEPSEEK_HARNESS)) {
             "The DeepSeek Harness runtime bundle is incomplete"
         }
+    }
+
+    /**
+     * Installs the official OpenCode v2 CLI via `curl -fsSL https://opencode.ai/v2/install | bash`,
+     * links it to `/usr/local/bin/opencode`, and disables the shared background service so
+     * each PRoot project session runs in its own isolated mount namespace.
+     */
+    private suspend fun ensureOpencodeInstalled(
+        proot: File,
+        fraction: Float,
+        onProgress: suspend (RuntimeInstallProgress) -> Unit,
+    ) {
+        if (isAgentInstalled(com.jarves.mh.model.AgentKind.OPENCODE)) return
+        writeResolver()
+        if (!File(rootfs, "usr/bin/curl").canExecute()) {
+            aptInstall(
+                proot = proot,
+                packages = listOf("curl", "ca-certificates"),
+                message = str(R.string.rt_install_git_base_tools),
+                fraction = fraction,
+                onProgress = onProgress,
+            )
+        }
+        onProgress(RuntimeInstallProgress(str(R.string.rt_install_installing_named, "OpenCode"), fraction, indeterminate = true))
+        runGuestCommand(
+            proot = proot,
+            command = "set -e; " +
+                "curl -fsSL https://opencode.ai/v2/install | bash; " +
+                "mkdir -p /usr/local/bin; " +
+                "if [ -x /root/.opencode/bin/opencode ]; then ln -sf ../../../root/.opencode/bin/opencode $OPENCODE_GUEST_PATH; fi; test -x $OPENCODE_GUEST_PATH; " +
+                "$OPENCODE_GUEST_PATH service set disabled true >/dev/null 2>&1 || true",
+            displayCommand = "curl -fsSL https://opencode.ai/v2/install | bash",
+            fraction = (fraction + 0.99f) / 2f,
+            timeoutMs = 15 * 60 * 1_000L,
+            onProgress = onProgress,
+            failureMessage = str(R.string.rt_install_verify_failed, "OpenCode"),
+        )
+        val version = probeOpencodeVersion(proot)
+        check(version.isNotBlank()) { str(R.string.rt_install_verify_failed, "OpenCode") }
+        opencodeMarker.writeText(version)
+        require(isAgentInstalled(com.jarves.mh.model.AgentKind.OPENCODE)) {
+            "OpenCode CLI installation is incomplete"
+        }
+    }
+
+    private suspend fun probeOpencodeVersion(proot: File): String {
+        val verify = process(
+            proot = proot,
+            rootfs = rootfs,
+            workspace = File(rootfs, "root"),
+            environment = emptyMap(),
+            guestCommand = listOf("/usr/bin/env", "bash", "-lc", "$OPENCODE_GUEST_PATH --version"),
+        )
+        withTimeout(60_000L) {
+            while (verify.isAlive) delay(50)
+        }
+        val exit = verify.waitFor()
+        val output = (verify as? NativeSpawnProcess)?.outputFile
+            ?.let(::readProcessOutputSafely)
+            .orEmpty()
+            .trim()
+        check(exit == 0) { actionableProcessError(output, str(R.string.rt_install_verify_failed, "OpenCode")) }
+        return SEMVER_PATTERN.findAll(output).map { it.value }.lastOrNull().orEmpty()
     }
 
     /**
@@ -1586,7 +1710,7 @@ class RuntimeInstaller(private val context: Context) {
             environment = buildMap {
                 put("HOME", "/root")
                 val androidReady = File(rootfs, "root/.pocket-android-tools-version").readTextOrNull() == ANDROID_TOOLS_VERSION
-                val basePath = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+                val basePath = "/root/.opencode/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
                 if (androidReady) {
                     put("ANDROID_HOME", "/root/android-sdk")
                     put("ANDROID_SDK_ROOT", "/root/android-sdk")
@@ -1907,6 +2031,8 @@ printf '%s\n' '{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decis
 
     companion object {
         const val AGY_GUEST_PATH = "/root/.local/bin/agy"
+        const val OPENCODE_GUEST_PATH = "/usr/local/bin/opencode"
+        private const val OPENCODE_HOME_BIN_REL_PATH = "root/.opencode/bin/opencode"
         const val GITHUB_CLI_GUEST_PATH = "/root/.local/bin/gh"
         private const val AGY_VERSION = "1.1.27"
         private const val AGY_RELEASE_URL = "https://storage.googleapis.com/antigravity-public/antigravity-cli/1.1.27-5211191891591168/linux-arm/cli_linux_arm64.tar.gz"
@@ -1948,6 +2074,7 @@ printf '%s\n' '{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decis
         private const val ANDROID_AAPT2_GUEST_PATH = "/root/android-sdk/build-tools/35.0.0/aapt2"
         private const val ANDROID_AAPT2_HOST_PATH = "root/android-sdk/build-tools/35.0.0/aapt2"
         private val CLAUDE_VERSION_PATTERN = Regex("[0-9]+\\.[0-9]+\\.[0-9]+")
+        private val SEMVER_PATTERN = Regex("[0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z.]+)?")
         /** Pinned DeepSeek Harness release installed via npm inside the guest (verified 2026-09-06). */
         const val DSH_VERSION = "0.1.2-rc.1"
         private const val DSH_ANDROID_COMPATIBILITY_VERSION = "copyfile-excl-v1"

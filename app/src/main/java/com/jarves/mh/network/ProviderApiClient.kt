@@ -2,12 +2,19 @@ package com.jarves.mh.network
 
 import android.content.Context
 import com.jarves.mh.R
+import com.jarves.mh.model.AgentKind
+import com.jarves.mh.model.ProviderKind
+import com.jarves.mh.model.ProviderProfile
 import com.jarves.mh.model.ProviderProtocol
+import com.jarves.mh.model.isKeylessAllowed
+import com.jarves.mh.runtime.OpencodeRuntimeBridge
+import com.jarves.mh.runtime.RuntimeInstaller
 import com.jarves.mh.ui.AppStrings
 import org.json.JSONArray
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
+import java.util.Locale
 import java.util.UUID
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -36,6 +43,98 @@ class ProviderApiClient(private val context: Context? = null) {
     private fun text(@androidx.annotation.StringRes id: Int, fallback: String, vararg args: Any): String =
         context?.let { AppStrings.get(it, id, *args) } ?: fallback
 
+    /**
+     * Discovers models for [ProviderKind.OPENCODE_CLI] using the installed OpenCode v2 CLI
+     * (`opencode models --standalone`), falling back to the public OpenCode catalog endpoint
+     * if queried before the CLI binary is installed.
+     */
+    suspend fun discoverOpencodeCliModels(
+        profile: ProviderProfile,
+        apiKey: String,
+    ): ModelDiscoveryResult = withContext(Dispatchers.IO) {
+        val appContext = context
+        if (appContext != null && RuntimeInstaller(appContext).isAgentInstalled(AgentKind.OPENCODE)) {
+            val bridge = OpencodeRuntimeBridge(appContext, secretFor = { apiKey })
+            val cliModels = runCatching { bridge.discoverCliModels(profile, apiKey) }.getOrDefault(emptyList())
+            if (cliModels.isNotEmpty()) {
+                return@withContext ModelDiscoveryResult.Success(cliModels, OpencodeRuntimeBridge.OPENCODE_GUEST_PATH)
+            }
+        }
+        discoverModels(profile.resolvedBaseUrl, apiKey, profile.kind.protocol)
+    }
+
+    /**
+     * Validates a provider profile through the official OpenCode v2 CLI binary inside PRoot
+     * so free-tier OpenCode Zen models never trigger Cloudflare's HTTP `FreeTierError`.
+     */
+    suspend fun validateOpencodeCli(
+        profile: ProviderProfile,
+        apiKey: String,
+    ): ConnectionValidation = withContext(Dispatchers.IO) {
+        if (profile.model.isBlank()) {
+            return@withContext ConnectionValidation.Failure(
+                text(R.string.rt_api_required_fields, "Base URL, model, and API key are required."),
+            )
+        }
+        if (apiKey.isBlank() && !profile.kind.isKeylessAllowed(profile.model)) {
+            return@withContext ConnectionValidation.Failure(
+                text(R.string.rt_api_required_fields, "Base URL, model, and API key are required."),
+            )
+        }
+        val appContext = context
+        if (appContext != null && RuntimeInstaller(appContext).isAgentInstalled(AgentKind.OPENCODE)) {
+            val bridge = OpencodeRuntimeBridge(appContext, secretFor = { apiKey })
+            return@withContext runCatching {
+                bridge.hello(profile, secretOverride = apiKey)
+                ConnectionValidation.Success(text(R.string.rt_api_connection_verified, "Connection verified."))
+            }.getOrElse { error ->
+                val reason = error.message.orEmpty()
+                val rejected = reason.contains("api key", true) ||
+                    reason.contains("auth", true) ||
+                    reason.contains("401", true) ||
+                    reason.contains("403", true)
+                ConnectionValidation.Failure(
+                    message = if (rejected) {
+                        text(R.string.rt_api_check_key, "Check this API key or select another saved key.")
+                    } else {
+                        reason.take(240).ifBlank { text(R.string.rt_api_check_connection, "Check your connection and try again.") }
+                    },
+                    providerMessage = reason.takeIf { it.isNotBlank() && rejected },
+                    label = if (rejected) {
+                        text(R.string.rt_api_label_rejected, "Rejected")
+                    } else {
+                        text(R.string.rt_api_label_request_failed, "Request failed")
+                    },
+                )
+            }
+        }
+
+        if (profile.kind != ProviderKind.OPENCODE_CLI) {
+            return@withContext validate(
+                baseUrl = profile.resolvedBaseUrl,
+                model = profile.model,
+                apiKey = apiKey,
+                protocol = profile.kind.protocol,
+                discoveredModels = emptyList(),
+                openRouterProviderOrder = profile.openRouterProviderOrder,
+                openRouterAllowFallbacks = profile.openRouterAllowFallbacks,
+            )
+        }
+
+        // Fallback if validated before the OpenCode agent overlay is installed: verify catalog reachability.
+        val catalogEndpoint = "${profile.resolvedBaseUrl.trim().trimEnd('/')}/models"
+        val response = request(catalogEndpoint, "GET", apiKey, protocol = ProviderProtocol.OPENAI_CHAT)
+        if (response.code in 200..299) {
+            ConnectionValidation.Success(text(R.string.rt_api_connection_verified, "Connection verified."))
+        } else {
+            ConnectionValidation.Failure(
+                text(R.string.rt_api_check_internet, "Check your internet connection and provider settings."),
+                response.error ?: providerErrorMessage(response.body),
+                text(R.string.rt_api_label_network_error, "Network error"),
+            )
+        }
+    }
+
     suspend fun discoverModels(
         baseUrl: String,
         apiKey: String,
@@ -52,11 +151,7 @@ class ProviderApiClient(private val context: Context? = null) {
         )
         var lastProviderMessage: String? = null
         for (endpoint in modelEndpoints(baseUrl, protocol)) {
-            // OpenRouter's complete catalog is public. Fetch it anonymously even when
-            // OpenRouter is configured through Custom API so an account-scoped key does
-            // not reduce discovery to the models allowed by that key's preferences.
-            // The saved key is still used for validation and all inference requests.
-            val discoveryKey = if (isOpenRouterCatalogEndpoint(endpoint)) "" else apiKey
+            val discoveryKey = if (isPublicCatalogEndpoint(endpoint)) "" else apiKey
             val response = request(endpoint, "GET", discoveryKey, protocol = protocol)
             when {
                 response.code == 401 || response.code == 403 -> {
@@ -102,9 +197,6 @@ class ProviderApiClient(private val context: Context? = null) {
         }
         val endpoint = messagesEndpoint(baseUrl, protocol)
         val body = validationBody(model, protocol, openRouterProviderOrder, openRouterAllowFallbacks)
-        // Gateways may need to cold-start a model before returning the first token.
-        // A ten-second validation timeout produced false "network" failures even
-        // though discovery and the endpoint itself were healthy.
         val response = request(endpoint, "POST", apiKey, body, protocol, connectTimeoutMs = 12_000, readTimeoutMs = 45_000)
         when {
             response.code in 200..299 -> ConnectionValidation.Success(text(R.string.rt_api_connection_verified, "Connection verified."))
@@ -177,7 +269,6 @@ class ProviderApiClient(private val context: Context? = null) {
                     setRequestProperty("Authorization", "Bearer $apiKey")
                 }
                 if (endpoint.startsWith("https://opencode.ai/zen/")) {
-                    // OpenCode Zen expects requests to identify the OpenCode client and session.
                     setRequestProperty("User-Agent", "opencode/1.18.20")
                     setRequestProperty("x-session-id", "session-${UUID.randomUUID()}")
                 }
@@ -226,9 +317,9 @@ class ProviderApiClient(private val context: Context? = null) {
         }
     }
 
-    private fun isOpenRouterCatalogEndpoint(endpoint: String): Boolean = runCatching {
+    private fun isPublicCatalogEndpoint(endpoint: String): Boolean = runCatching {
         val url = URL(endpoint)
-        url.host.equals("openrouter.ai", ignoreCase = true) &&
+        (url.host.equals("openrouter.ai", ignoreCase = true) || url.host.equals("opencode.ai", ignoreCase = true)) &&
             url.path.trimEnd('/').endsWith("/models")
     }.getOrDefault(false)
 
@@ -310,14 +401,19 @@ class ProviderApiClient(private val context: Context? = null) {
     private data class HttpResult(val code: Int, val body: String, val error: String? = null)
 
     private companion object {
-        // Some OpenAI-compatible providers reject values below three. Eight remains
-        // small while working across OpenAI chat, Anthropic-compatible and router APIs.
         const val VALIDATION_MAX_TOKENS = 8
         const val MAX_PROVIDER_RESPONSE_CHARS = 2 * 1024 * 1024
     }
 }
 
 object ModelResponseParser {
+    private fun isFreeModelId(id: String): Boolean {
+        val clean = id.trim().removePrefix("opencode/")
+        return clean.endsWith(":free", ignoreCase = true) ||
+            clean.endsWith("-free", ignoreCase = true) ||
+            clean.equals("big-pickle", ignoreCase = true)
+    }
+
     fun parse(json: String): List<DiscoveredModel> = runCatching {
         val trimmed = json.trim()
         val array = when {
@@ -330,13 +426,13 @@ object ModelResponseParser {
         buildList {
             for (index in 0 until array.length()) {
                 when (val item = array.opt(index)) {
-                    is String -> add(DiscoveredModel(item))
+                    is String -> add(DiscoveredModel(item, item, isFreeModelId(item)))
                     is JSONObject -> {
                         val id = item.optString("id").ifBlank { item.optString("name") }
                         if (id.isNotBlank()) {
                             val label = item.optString("display_name").ifBlank { item.optString("displayName") }.ifBlank { id }
                             val pricing = item.optJSONObject("pricing")
-                            val free = id.endsWith(":free", ignoreCase = true) || pricing?.let {
+                            val free = isFreeModelId(id) || pricing?.let {
                                 listOf("prompt", "completion", "request").all { field ->
                                     it.optString(field, "0").toDoubleOrNull() == 0.0
                                 }
@@ -348,4 +444,53 @@ object ModelResponseParser {
             }
         }.distinctBy { it.id }.sortedWith(compareByDescending<DiscoveredModel> { it.isFree }.thenBy { it.displayName.lowercase() })
     }.getOrDefault(emptyList())
+
+    /**
+     * Parses the newline-delimited `provider/model` output of `opencode models --standalone`.
+     */
+    fun parseOpencodeCliOutput(output: String, providerPrefix: String = "opencode/"): List<DiscoveredModel> {
+        val normalizedPrefix = providerPrefix.trim()
+        return output.lineSequence()
+            .map(String::trim)
+            .filter { line ->
+                line.isNotBlank() &&
+                    !line.startsWith("proot warning:", ignoreCase = true) &&
+                    line.matches(Regex("[a-z0-9._-]+/[a-zA-Z0-9._:-]+"))
+            }
+            .filter { line ->
+                normalizedPrefix.isEmpty() || line.startsWith(normalizedPrefix, ignoreCase = true)
+            }
+            .map { line ->
+                val modelId = if (normalizedPrefix.isNotEmpty() && line.startsWith(normalizedPrefix, ignoreCase = true)) {
+                    line.substring(normalizedPrefix.length)
+                } else {
+                    line
+                }
+                DiscoveredModel(
+                    id = modelId,
+                    displayName = formatOpencodeModelDisplayName(modelId),
+                    isFree = isFreeModelId(modelId),
+                )
+            }
+            .distinctBy { it.id }
+            .sortedWith(compareByDescending<DiscoveredModel> { it.isFree }.thenBy { it.displayName.lowercase(Locale.ROOT) })
+            .toList()
+    }
+
+    private fun formatOpencodeModelDisplayName(modelId: String): String = when (modelId.lowercase(Locale.ROOT)) {
+        "mimo-v2.6-flash-free" -> "MiMo-V2.6-Flash Free"
+        "mimo-v2.5-free" -> "MiMo-V2.5 Free"
+        "deepseek-v4.1-flash-free" -> "DeepSeek V4.1 Flash Free"
+        "big-pickle" -> "Big Pickle"
+        "space-bunny-free" -> "Space Bunny Free"
+        "cat-jam-free" -> "Cat Jam Free"
+        "longcat-2.5-preview-free" -> "LongCat 2.5 Preview Free"
+        "step-5-preview-free" -> "Step 5 Preview Free"
+        "exo-free" -> "Exo Free"
+        "nemotron-3-ultra-free" -> "Nemotron 3 Ultra Free"
+        "nemotron-3.5-lightning-free" -> "Nemotron 3.5 Lightning Free"
+        "muse-spark-1.3-contributor-free" -> "Muse Spark 1.3 Contributor Free"
+        "jev-1.13-free" -> "Jev 1.13 Free"
+        else -> modelId
+    }
 }

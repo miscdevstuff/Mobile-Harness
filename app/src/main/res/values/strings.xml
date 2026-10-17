@@ -116,7 +116,7 @@
     <string name="bg_status_granted">Granted</string>
     <string name="bg_step_indicator">STEP %1$d OF %2$d</string>
     <string name="bg_notifications_title">Task notifications</string>
-    <string name="bg_notifications_desc">See live progress and receive an alert when Claude finishes or needs your attention.</string>
+    <string name="bg_notifications_desc">See live progress and receive an alert when your coding agent finishes or needs your attention.</string>
     <string name="bg_notifications_privacy">Only task progress, completion, and error notifications are sent.</string>
     <string name="bg_notifications_allow">Allow notifications</string>
     <string name="bg_notifications_settings">Open notification settings</string>
@@ -214,7 +214,8 @@
     <string name="provider_title_openrouter">OpenRouter</string>
     <string name="provider_title_deepseek">DeepSeek</string>
     <string name="provider_title_kimi">Kimi</string>
-    <string name="provider_title_opencode">OpenCode Zen</string>
+    <string name="provider_title_opencode_cli" translatable="false">OpenCode Zen (Official CLI)</string>
+    <string name="provider_title_opencode">OpenCode Zen (HTTP API)</string>
     <string name="provider_title_nvidia">NVIDIA NIM</string>
     <string name="provider_title_custom">Custom API</string>
     <string name="provider_subtitle_claude">Pro, Max, Team or Enterprise</string>
@@ -222,7 +223,8 @@
     <string name="provider_subtitle_openrouter">Use your OpenRouter API key</string>
     <string name="provider_subtitle_deepseek">Use your DeepSeek API key</string>
     <string name="provider_subtitle_anthropic_compatible">Anthropic-compatible endpoint</string>
-    <string name="provider_subtitle_opencode">Models through the OpenCode Zen gateway</string>
+    <string name="provider_subtitle_opencode_cli" translatable="false">Free &amp; paid models via official OpenCode v2 CLI</string>
+    <string name="provider_subtitle_opencode">Paid models through the OpenCode Zen HTTP gateway</string>
     <string name="provider_subtitle_nvidia">OpenAI-compatible models hosted by NVIDIA</string>
     <string name="provider_gateway_protocol">Gateway protocol</string>
     <string name="provider_gateway_protocol_help">Pick the protocol your gateway speaks; DeepSeek Harness routes it directly.</string>
@@ -234,18 +236,20 @@
     <string name="provider_no_matching_models">No matching models</string>
     <string name="provider_free"> FREE</string>
     <string name="provider_encrypted_locally">Encrypted locally</string>
+    <string name="provider_endpoint_opencode" translatable="false">OpenCode will run models through its official v2 CLI.</string>
     <string name="provider_endpoint_deepseek">DeepSeek Harness will connect through this API endpoint.</string>
     <string name="provider_endpoint_translate">Mobile Harness will translate Claude Code requests for this provider.</string>
     <string name="provider_endpoint_claude">Claude Code will connect through this API endpoint.</string>
     <string name="provider_fixed_by">Fixed by %1$s</string>
     <string name="provider_saved_key_placeholder">Saved securely — leave blank to keep it</string>
+    <string name="provider_optional_key_placeholder" translatable="false">Optional for free models — enter key for paid models</string>
     <string name="provider_enter_key">Enter your API key</string>
     <string name="provider_saved_key_ready">A saved key is ready to use</string>
     <string name="provider_model_name">Model name</string>
     <string name="provider_model_help">Select an available model or enter an exact model ID.</string>
     <string name="provider_find_models">Find available models</string>
     <string name="provider_available_models_count">Available models (%1$d)</string>
-    <string name="provider_checking_settings">Checking API key, model, and Claude Code settings…</string>
+    <string name="provider_checking_settings">Checking API key, model, and provider settings…</string>
     <string name="provider_checking">Checking</string>
     <string name="provider_claude_connect_desc">Connect a Claude Pro, Max, Team, or Enterprise subscription to Claude Code.</string>
     <string name="provider_claude_step_one">1. On a computer where Claude Code is installed, run:</string>
@@ -261,9 +265,11 @@
     <string name="agent_title_claude">Claude Code</string>
     <string name="agent_title_deepseek">DeepSeek Harness</string>
     <string name="agent_title_antigravity">Antigravity CLI</string>
+    <string name="agent_title_opencode" translatable="false">OpenCode</string>
     <string name="agent_subtitle_claude">Anthropic’s coding agent · broad provider support</string>
     <string name="agent_subtitle_deepseek">Official DeepSeek coding agent · API-key providers</string>
     <string name="agent_subtitle_antigravity">Google’s official coding agent · Google account</string>
+    <string name="agent_subtitle_opencode" translatable="false">Official OpenCode v2 agent · Zen + API providers</string>
     <string name="projects_hero_title">Build from your phone</string><string name="projects_hero_desc">Chat, review changes, and preview your project.</string><string name="projects_quick_project">Quick project</string><string name="projects_new_project">New project</string><string name="projects_bring_existing">Bring an existing project</string><string name="projects_import_expanded">Import files or clone complete Git history</string><string name="projects_import_sources">ZIP file, Git repository, or GitHub</string><string name="projects_your_projects">Your projects</string><string name="projects_empty_title">No projects yet</string><string name="projects_empty_desc">Create a named project or start instantly with a Quick Project.</string><string name="projects_terminal">Terminal</string>
     <string name="agent_screen_title">AI Agent</string><string name="agent_status_testing">Testing…</string><string name="agent_status_attention">Attention</string><string name="agent_status_online">Online</string><string name="agent_status_not_tested">Not tested</string><string name="agent_provider_title">AI provider</string><string name="agent_custom_api_settings">Custom API settings</string><string name="agent_endpoint_protocol">Endpoint &amp; protocol</string><string name="agent_model_access">Model &amp; access</string><string name="agent_discovering">Discovering…</string><string name="agent_discover_models">Discover models</string><string name="agent_models_count">%1$d models</string><string name="agent_ai_model">AI model</string><string name="agent_select_model">Select or type a model ID</string><string name="agent_subscription_token">Subscription token</string><string name="agent_credentials">Credentials</string><string name="agent_test_connection">Test connection</string><string name="agent_runtime_updates">Runtime updates</string><string name="agent_updates_current">Installed agents stay current</string><string name="agent_check_updates">Check updates</string><string name="agent_security_footer">API keys encrypted in Android secure storage · Terminal is accessible from any project</string><string name="agent_approval_footer">Automatic tool approval · Runs inside the private Linux workspace</string>
     <string name="projects_importing">Importing…</string><string name="projects_zip_file">ZIP file</string><string name="projects_cloning">Cloning…</string><string name="projects_git_url">Git URL</string><string name="projects_github_account">GitHub · @%1$s</string><string name="projects_connect_github">Connect GitHub</string><string name="projects_browse_repositories">Browse public and private repositories</string><string name="projects_sign_in_repositories">Sign in to access your repositories</string>

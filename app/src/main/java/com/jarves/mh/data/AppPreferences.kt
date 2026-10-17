@@ -19,6 +19,18 @@ import org.json.JSONObject
 import java.io.File
 import java.time.Instant
 
+/**
+ * Resolves the active secret for [kind], sharing saved OpenCode keys between
+ * [ProviderKind.OPENCODE_CLI] and [ProviderKind.OPENCODE_ZEN] when one is empty.
+ */
+fun resolveProviderSecret(vault: ApiKeyVault, kind: ProviderKind): String? {
+    vault.get(kind.name)?.takeIf(String::isNotBlank)?.let { return it }
+    return when (kind) {
+        ProviderKind.OPENCODE_ZEN -> vault.get(ProviderKind.OPENCODE_CLI.name)?.takeIf(String::isNotBlank)
+        else -> null
+    }
+}
+
 class AppPreferences(private val context: Context) {
     private val preferences = context.getSharedPreferences("pocket_preferences", Context.MODE_PRIVATE)
 
@@ -89,8 +101,6 @@ class AppPreferences(private val context: Context) {
     }
 
     private fun agentConversationKey(agent: AgentKind, projectId: String, chatId: String): String {
-        // Antigravity v2 sessions are created with an explicit CLI project so
-        // old default-project conversations cannot redirect writes to scratch.
         val version = if (agent == AgentKind.ANTIGRAVITY) "v2_" else ""
         return "agent_conversation_${version}${agent.stableId}_${projectId}_$chatId"
     }
@@ -120,11 +130,6 @@ class AppPreferences(private val context: Context) {
         get() = preferences.getLong("last_app_update_check_millis", 0L)
         set(value) { preferences.edit().putLong("last_app_update_check_millis", value).apply() }
 
-    /**
-     * Debug-only manifest URL override. Empty in release builds; populated via
-     * Settings → Update channel in debug builds so a local server (exposed via
-     * Cloudflare Tunnel or ngrok) can be tested without publishing a release.
-     */
     var debugUpdateManifestUrl: String
         get() = preferences.getString("debug_update_manifest_url", "") ?: ""
         set(value) { preferences.edit().putString("debug_update_manifest_url", value).apply() }
@@ -143,7 +148,6 @@ class AppPreferences(private val context: Context) {
             value.sorted().forEach(arr::put)
             preferences.edit().putString("selected_dev_stacks", arr.toString()).apply()
         }
-
 
     fun saveProvider(profile: ProviderProfile, agent: AgentKind? = null) {
         val editor = preferences.edit()
@@ -179,10 +183,12 @@ class AppPreferences(private val context: Context) {
         val storedModel = storedKind?.let {
             preferences.getString("${sourcePrefix}model", it.defaultModel) ?: it.defaultModel
         }.orEmpty()
-        // Older builds copied the global Claude/Anthropic default into a new
-        // DeepSeek Harness profile. Treat that untouched, keyless placeholder
-        // as unconfigured so DeepSeek opens on its own official provider.
         val legacyClaudeDefaultInDeepSeek = agent == AgentKind.DEEPSEEK_HARNESS &&
+            storedKind == ProviderKind.ANTHROPIC &&
+            !vault.contains(ProviderKind.ANTHROPIC.name) &&
+            storedBaseUrl == ProviderKind.ANTHROPIC.defaultBaseUrl &&
+            storedModel == ProviderKind.ANTHROPIC.defaultModel
+        val legacyClaudeDefaultInOpencode = agent == AgentKind.OPENCODE &&
             storedKind == ProviderKind.ANTHROPIC &&
             !vault.contains(ProviderKind.ANTHROPIC.name) &&
             storedBaseUrl == ProviderKind.ANTHROPIC.defaultBaseUrl &&
@@ -190,8 +196,10 @@ class AppPreferences(private val context: Context) {
         val kind = when {
             agent == null -> storedKind ?: ProviderKind.ANTHROPIC
             agent == AgentKind.DEEPSEEK_HARNESS && (!hasAgentProfile || legacyClaudeDefaultInDeepSeek) -> ProviderKind.DEEPSEEK
+            agent == AgentKind.OPENCODE && (!hasAgentProfile || legacyClaudeDefaultInOpencode) -> ProviderKind.OPENCODE_CLI
             storedKind != null && storedKind in providersForAgent(agent) -> storedKind
             agent == AgentKind.DEEPSEEK_HARNESS -> ProviderKind.DEEPSEEK
+            agent == AgentKind.OPENCODE -> ProviderKind.OPENCODE_CLI
             else -> ProviderKind.ANTHROPIC
         }
         val useStoredValues = storedKind == kind
@@ -200,8 +208,6 @@ class AppPreferences(private val context: Context) {
         } else {
             kind.defaultModel
         }
-        // DeepSeek retired its legacy alias. Migrate only DeepSeek profiles so
-        // custom and gateway providers keep their independently selected model.
         val model = if (
             kind == ProviderKind.DEEPSEEK &&
             savedModel in setOf("deepseek-chat", "deepseek-reasoner")
@@ -220,7 +226,7 @@ class AppPreferences(private val context: Context) {
                 kind.defaultBaseUrl
             },
             model = model,
-            hasSecret = vault.contains(kind.name),
+            hasSecret = resolveProviderSecret(vault, kind) != null,
             dshApi = if (useStoredValues) {
                 preferences.getString("${sourcePrefix}dsh_api", defaultDshApiForProvider(kind))
                     ?: defaultDshApiForProvider(kind)
@@ -356,7 +362,6 @@ class AppPreferences(private val context: Context) {
             }.getOrDefault(emptyList())
         }
 
-        // Migrate the original one-file-per-project conversation without losing it.
         val legacy = File(chatsDir, "$projectId.json")
         val legacyMessages = loadLegacyMessages(legacy)
         val now = System.currentTimeMillis()

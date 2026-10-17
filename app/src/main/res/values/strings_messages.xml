@@ -14,10 +14,10 @@
     <string name="vm_unsupported_terminal_process">Unsupported terminal process.</string>
     <string name="vm_process_not_accepting_input">This process is no longer accepting input.</string>
     <string name="vm_unsafe_project_root">Unsafe project root</string>
-    <string name="vm_wait_agent_before_build">Wait for Claude to finish creating the project before building.</string>
+    <string name="vm_wait_agent_before_build">Wait for the coding agent to finish creating the project before building.</string>
     <string name="vm_wait_terminal_before_build">Wait for the project terminal command to finish before building.</string>
     <string name="vm_building_debug_apk">Building debug APK…</string>
-    <string name="vm_no_android_project">No Android Gradle project found yet. Ask Claude to create it, then wait for the task to finish.</string>
+    <string name="vm_no_android_project">No Android Gradle project found yet. Ask your coding agent to create it, then wait for the task to finish.</string>
     <string name="vm_gradle_build_failed">Gradle build failed (exit code %1$d)</string>
     <string name="vm_no_debug_apk">Gradle finished but no debug APK was found</string>
     <string name="vm_apk_sent_to_installer">APK sent to Android installer</string>
@@ -27,7 +27,7 @@
     <string name="vm_preparing_workspace">Preparing your private coding workspace</string>
     <string name="vm_setup_paused">Setup paused</string>
     <string name="vm_opening_workspace">Opening your private workspace</string>
-    <string name="vm_initialization_failed">Claude Code initialization failed</string>
+    <string name="vm_initialization_failed">Runtime initialization failed</string>
     <string name="vm_installer_start_failed">Could not start the Android installer</string>
     <string name="vm_update_download_failed">Update download failed</string>
     <string name="vm_setup_offline">Connect to Wi-Fi or mobile data, then try again. Internet is required to finish the first-time setup.</string>

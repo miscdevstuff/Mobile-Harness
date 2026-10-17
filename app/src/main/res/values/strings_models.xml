@@ -29,6 +29,8 @@
     <string name="md_reason_no_claude_token">No Claude subscription token is saved. Add one from Agent → AI provider.</string>
     <string name="md_reason_dsh_not_installed">DeepSeek Harness is not installed. Open Settings → Coding agent to install it.</string>
     <string name="md_reason_antigravity_not_installed">Antigravity CLI is not installed. Open Settings → Coding agent to install it.</string>
+    <string name="md_reason_opencode_not_installed" translatable="false">OpenCode is not installed. Open Settings → Coding agent to install it.</string>
+    <string name="md_reason_opencode_could_not_start" translatable="false">OpenCode could not start.</string>
     <string name="md_chat_title_attachments">Review the attached files</string>
     <string name="md_reason_user_not_found">User not found. Check the API key and provider account.</string>
     <string name="md_reason_key_rejected">The provider rejected the saved API key.</string>

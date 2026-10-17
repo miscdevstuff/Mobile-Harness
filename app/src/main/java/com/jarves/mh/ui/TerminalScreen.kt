@@ -175,6 +175,7 @@ fun TerminalScreen(
         "df -h",
         "free -m",
         "claude --version",
+        "opencode --version",
     )
 
     Scaffold(

@@ -27,6 +27,7 @@ import com.jarves.mh.R
 import com.jarves.mh.data.ApiKeyVault
 import com.jarves.mh.data.ApiKeyInfo
 import com.jarves.mh.data.AppPreferences
+import com.jarves.mh.data.resolveProviderSecret
 import com.jarves.mh.model.ActivityItem
 import com.jarves.mh.model.AgentKind
 import com.jarves.mh.model.ChangeItem
@@ -45,6 +46,7 @@ import com.jarves.mh.model.ToolRequest
 import com.jarves.mh.model.WorkspaceEntry
 import com.jarves.mh.model.projectSlug
 import com.jarves.mh.model.generateQuickChatIdentity
+import com.jarves.mh.model.isKeylessAllowed
 import com.jarves.mh.model.providerProtocolForAgent
 import com.jarves.mh.network.ConnectionValidation
 import com.jarves.mh.network.ModelDiscoveryResult
@@ -52,6 +54,7 @@ import com.jarves.mh.network.ProviderApiClient
 import com.jarves.mh.network.GitHubRepository
 import com.jarves.mh.runtime.ClaudeRuntimeBridge
 import com.jarves.mh.runtime.DshRuntimeBridge
+import com.jarves.mh.runtime.OpencodeRuntimeBridge
 import com.jarves.mh.runtime.AgentRegistry
 import com.jarves.mh.runtime.AgentUpdateInfo
 import com.jarves.mh.runtime.AntigravityAuthController
@@ -413,8 +416,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private val vault = ApiKeyVault(application)
     private val preferences = AppPreferences(application)
-    private val claudeRuntime = ClaudeRuntimeBridge(application) { profile -> vault.get(profile.kind.name) }
-    private val dshRuntime = DshRuntimeBridge(application) { profile -> vault.get(profile.kind.name) }
+    private val claudeRuntime = ClaudeRuntimeBridge(application) { profile -> resolveProviderSecret(vault, profile.kind) }
+    private val dshRuntime = DshRuntimeBridge(application) { profile -> resolveProviderSecret(vault, profile.kind) }
     private val installer = RuntimeInstaller(application)
     private val antigravityRuntime = AntigravityRuntimeBridge(
         application,
@@ -427,7 +430,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             _state.value.activeChatId?.let { preferences.saveAgentConversation(AgentKind.ANTIGRAVITY, projectId, it, id) }
         },
     )
-    private val agentRegistry = AgentRegistry.builtIns(claudeRuntime, dshRuntime, antigravityRuntime)
+    private val opencodeRuntime = OpencodeRuntimeBridge(
+        application,
+        secretFor = { profile -> resolveProviderSecret(vault, profile.kind) },
+        conversationId = { projectId ->
+            _state.value.activeChatId?.let { preferences.loadAgentConversation(AgentKind.OPENCODE, projectId, it) }
+        },
+        saveConversationId = { projectId, id ->
+            _state.value.activeChatId?.let { preferences.saveAgentConversation(AgentKind.OPENCODE, projectId, it, id) }
+        },
+    )
+    private val agentRegistry = AgentRegistry.builtIns(claudeRuntime, dshRuntime, antigravityRuntime, opencodeRuntime)
     private fun activeRuntime(): com.jarves.mh.runtime.RuntimeBridge = agentRegistry.require(_state.value.agentKind).runtime
     private val providerApi = ProviderApiClient(application)
     private fun appUpdater(): AppUpdater = AppUpdater(
@@ -570,6 +583,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
         viewModelScope.launch { dshRuntime.events.collect(::onRuntimeEvent) }
         viewModelScope.launch { antigravityRuntime.events.collect(::onRuntimeEvent) }
+        viewModelScope.launch { opencodeRuntime.events.collect(::onRuntimeEvent) }
         viewModelScope.launch {
             antigravityAuthController.state.collect { auth ->
                 _state.update { it.copy(antigravityAuth = auth) }
@@ -623,7 +637,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 val workspaceDir = File(application.filesDir, "workspaces/${project.id}")
                 val userFiles = if (workspaceDir.isDirectory) {
                     workspaceDir.walkTopDown().filter { file ->
-                        file.isFile && !file.name.startsWith(".claude") && file.name != ".pocket-dev-stacks.json"
+                        file.isFile && !file.name.startsWith(".claude") && !file.name.startsWith(".opencode") && file.name != ".pocket-dev-stacks.json"
                     }.count()
                 } else 0
                 val keep = userMessages > 0 || userFiles > 0
@@ -888,6 +902,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 runCatching { claudeRuntime.stopActiveSession() }
                 runCatching { dshRuntime.stopActiveSession() }
                 runCatching { antigravityRuntime.stopActiveSession() }
+                runCatching { opencodeRuntime.stopActiveSession() }
             }
             if (!current.projectTerminalRunning) {
                 projectTerminalProcess?.takeIf(Process::isAlive)?.destroyForcibly()
@@ -2006,7 +2021,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _state.update { it.copy(initialLanguageSelected = false) }
     }
 
-    fun getSavedApiKey(kind: ProviderKind): String = vault.get(kind.name).orEmpty()
+    fun getSavedApiKey(kind: ProviderKind): String = resolveProviderSecret(vault, kind).orEmpty()
 
     fun getSavedApiKeys(kind: ProviderKind): List<ApiKeyInfo> = vault.list(kind.name)
 
@@ -2040,11 +2055,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    /** Keeps both agent bridges mapped to the same workspace root; the active one is used. */
+    /** Keeps all agent bridges mapped to the same workspace root; the active one is used. */
     private fun configureBridgeRoots(projectId: String, rootPath: String) {
         claudeRuntime.configureProjectRoot(projectId, rootPath)
         dshRuntime.configureProjectRoot(projectId, rootPath)
         antigravityRuntime.configureProjectRoot(projectId, rootPath)
+        opencodeRuntime.configureProjectRoot(projectId, rootPath)
     }
 
     init {
@@ -2350,13 +2366,22 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun finishOnboarding(profile: ProviderProfile, secret: String) {
         vault.put(profile.kind.name, secret)
         val saved = profile.copy(
-            hasSecret = secret.isNotBlank() || vault.contains(profile.kind.name),
+            hasSecret = secret.isNotBlank() || resolveProviderSecret(vault, profile.kind) != null,
         )
         preferences.saveProvider(saved, _state.value.agentKind)
         preferences.onboardingComplete = true
-        _state.update { it.copy(onboardingComplete = true, provider = saved, startupStage = StartupStage.READY) }
+        val verifiedDuringSave = profile.kind != ProviderKind.CLAUDE
+        _state.update {
+            it.copy(
+                onboardingComplete = true,
+                provider = saved,
+                startupStage = StartupStage.READY,
+                apiPingStatus = if (verifiedDuringSave) ApiPingStatus.OK else it.apiPingStatus,
+                apiPingMessage = if (verifiedDuringSave) str(R.string.vm_ping_success) else it.apiPingMessage,
+            )
+        }
         refreshActiveApiKey(profile.kind)
-        autoPingApi()
+        if (!verifiedDuringSave) autoPingApi()
     }
 
     fun finishAntigravityOnboarding() {
@@ -2818,7 +2843,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     suspend fun discoverModels(profile: ProviderProfile, secret: String): ModelDiscoveryResult {
-        val key = secret.ifBlank { vault.get(profile.kind.name).orEmpty() }
+        val key = secret.ifBlank { resolveProviderSecret(vault, profile.kind).orEmpty() }
+        if (profile.kind == ProviderKind.OPENCODE_CLI) {
+            return providerApi.discoverOpencodeCliModels(profile, key)
+        }
         return providerApi.discoverModels(profile.baseUrl, key, providerProtocolForAgent(profile, _state.value.agentKind))
     }
 
@@ -2827,7 +2855,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         secret: String,
         models: List<com.jarves.mh.network.DiscoveredModel>,
     ): ConnectionValidation {
-        val key = secret.ifBlank { vault.get(profile.kind.name).orEmpty() }
+        val key = secret.ifBlank { resolveProviderSecret(vault, profile.kind).orEmpty() }
+        if (profile.kind == ProviderKind.OPENCODE_CLI) {
+            return providerApi.validateOpencodeCli(profile, key)
+        }
         return providerApi.validate(
             profile.baseUrl,
             profile.model,
@@ -2863,16 +2894,20 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         if (_state.value.apiPingStatus == ApiPingStatus.PINGING) return
         _state.update { it.copy(apiPingStatus = ApiPingStatus.PINGING, apiPingMessage = str(R.string.vm_ping_sending)) }
         viewModelScope.launch {
-            val key = vault.get(profile.kind.name).orEmpty()
-            val result = providerApi.validate(
-                profile.baseUrl,
-                profile.model,
-                key,
-                providerProtocolForAgent(profile, _state.value.agentKind),
-                emptyList(),
-                profile.openRouterProviderOrder,
-                profile.openRouterAllowFallbacks,
-            )
+            val key = resolveProviderSecret(vault, profile.kind).orEmpty()
+            val result = if (profile.kind == ProviderKind.OPENCODE_CLI || (_state.value.agentKind == AgentKind.OPENCODE && installer.isAgentInstalled(AgentKind.OPENCODE))) {
+                providerApi.validateOpencodeCli(profile, key)
+            } else {
+                providerApi.validate(
+                    profile.baseUrl,
+                    profile.model,
+                    key,
+                    providerProtocolForAgent(profile, _state.value.agentKind),
+                    emptyList(),
+                    profile.openRouterProviderOrder,
+                    profile.openRouterAllowFallbacks,
+                )
+            }
             when (result) {
                 is ConnectionValidation.Success -> _state.update {
                     it.copy(apiPingStatus = ApiPingStatus.OK, apiPingMessage = str(R.string.vm_ping_success))
@@ -3061,7 +3096,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val workspaceDir = File(getApplication<Application>().filesDir, "workspaces/${active.id}")
             val userFiles = if (workspaceDir.isDirectory) {
                 workspaceDir.walkTopDown().filter { file ->
-                    file.isFile && !file.name.startsWith(".claude") && file.name != ".pocket-dev-stacks.json"
+                    file.isFile && !file.name.startsWith(".claude") && !file.name.startsWith(".opencode") && file.name != ".pocket-dev-stacks.json"
                 }.count()
             } else 0
 
@@ -3824,12 +3859,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val base = File(getApplication<Application>().filesDir, "workspaces/${project.id}")
         if (!base.isDirectory) return null
         val visible = base.listFiles().orEmpty().filterNot { file ->
-            file.name == ".claude" || file.name == ".claude.json"
+            file.name == ".claude" || file.name == ".claude.json" || file.name == ".opencode" || file.name == ".opencode.json"
         }
         val onlyDirectory = visible.singleOrNull()?.takeIf(File::isDirectory) ?: return null
         val containsProjectFiles = onlyDirectory.walkTopDown()
             .maxDepth(2)
-            .any { it.isFile && it.name !in setOf(".DS_Store", ".claude.json") }
+            .any { it.isFile && it.name !in setOf(".DS_Store", ".claude.json", ".opencode.json") }
         return onlyDirectory.name.takeIf { containsProjectFiles && !it.contains("..") }
     }
 
@@ -4284,7 +4319,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private fun isClaudeRuntimeMetadata(relativePath: String): Boolean {
         return relativePath == ".claude" ||
             relativePath == ".claude.json" ||
-            relativePath.startsWith(".claude/")
+            relativePath.startsWith(".claude/") ||
+            relativePath == ".opencode" ||
+            relativePath == ".opencode.json" ||
+            relativePath.startsWith(".opencode/")
     }
 
     private fun safeWorkspaceFile(project: Project, relativePath: String): File? {
@@ -5248,7 +5286,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val kind = ProviderKind.entries.firstOrNull { it.title == name }
             return str(R.string.md_reason_no_api_key, kind?.localizedTitle(getApplication()) ?: name)
         }
-        Regex("^(Claude Code|DeepSeek Harness) stopped with exit code (-?\\d+)$").matchEntire(trimmed)?.let { match ->
+        Regex("^(Claude Code|DeepSeek Harness|OpenCode) stopped with exit code (-?\\d+)$").matchEntire(trimmed)?.let { match ->
             return str(R.string.md_reason_agent_exit_code, match.groupValues[1], match.groupValues[2].toInt())
         }
         Regex("^Antigravity exited with code (-?\\d+)$").matchEntire(trimmed)?.let { match ->
@@ -5277,6 +5315,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             "No Claude subscription token is saved. Add one from Agent → AI provider." -> str(R.string.md_reason_no_claude_token)
             "DeepSeek Harness is not installed. Open Settings → Coding agent to install it." -> str(R.string.md_reason_dsh_not_installed)
             "Antigravity CLI is not installed. Open Settings → Coding agent to install it." -> str(R.string.md_reason_antigravity_not_installed)
+            "OpenCode is not installed. Open Settings → Coding agent to install it." -> str(R.string.md_reason_opencode_not_installed)
+            "OpenCode could not start." -> str(R.string.md_reason_opencode_could_not_start)
             "Antigravity did not answer. Try again." -> str(R.string.vm_antigravity_no_answer)
             else -> reason
         }

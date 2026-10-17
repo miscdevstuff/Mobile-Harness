@@ -17,7 +17,7 @@ import org.json.JSONArray
  * Each project workspace gets a baseline copy before a session runs; after the
  * run the baseline is diffed to produce reviewable [ChangeItem]s with
  * per-file Undo/Keep. Semantics mirror the original Claude bridge store so
- * both agents behave identically in the Changes tab.
+ * all agents behave identically in the Changes tab.
  */
 class WorkspaceCheckpoints(
     private val filesDir: File,
@@ -268,9 +268,11 @@ class WorkspaceCheckpoints(
 
     fun isInternalRuntimePath(path: String): Boolean {
         val normalized = path.replace('\\', '/')
-        return normalized == ".claude.json" || IGNORED_DIRECTORY_NAMES.any { directory ->
-            normalized == directory || normalized.startsWith("$directory/") || normalized.contains("/$directory/")
-        }
+        return normalized == ".claude.json" ||
+            normalized == ".opencode.json" ||
+            IGNORED_DIRECTORY_NAMES.any { directory ->
+                normalized == directory || normalized.startsWith("$directory/") || normalized.contains("/$directory/")
+            }
     }
 
     private fun digest(file: File): String {
@@ -293,6 +295,7 @@ class WorkspaceCheckpoints(
         private const val DIFF_CONTEXT_LINES = 3
         private val IGNORED_DIRECTORY_NAMES = setOf(
             ".claude",
+            ".opencode",
             ".git",
             ".gradle",
             ".idea",

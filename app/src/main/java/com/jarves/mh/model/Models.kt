@@ -23,9 +23,18 @@ enum class ProviderKind(
     LLM_ROUTER("OpenRouter", "Use your OpenRouter API key", ProviderProtocol.OPENROUTER, "https://openrouter.ai/api", "~anthropic/claude-sonnet-latest"),
     DEEPSEEK("DeepSeek", "Use your DeepSeek API key", ProviderProtocol.ANTHROPIC_GATEWAY, "https://api.deepseek.com/anthropic", "deepseek-v4-flash"),
     KIMI("Kimi", "Anthropic-compatible endpoint", ProviderProtocol.ANTHROPIC_GATEWAY, "https://api.moonshot.ai/anthropic", "kimi-k2.6", true),
+    OPENCODE_CLI(
+        "OpenCode Zen (Official CLI)",
+        "Free & paid models via official OpenCode v2 CLI",
+        ProviderProtocol.OPENAI_CHAT,
+        "https://opencode.ai/inference/v1",
+        "mimo-v2.6-flash-free",
+        fixedBaseUrl = true,
+        fixedProtocol = true,
+    ),
     OPENCODE_ZEN(
-        "OpenCode Zen",
-        "Models through the OpenCode Zen gateway",
+        "OpenCode Zen (HTTP API)",
+        "Models through the OpenCode Zen HTTP gateway",
         ProviderProtocol.OPENAI_RESPONSES,
         "https://opencode.ai/zen/v1",
         "deepseek-v4-flash",
@@ -42,6 +51,21 @@ enum class ProviderKind(
         fixedProtocol = true,
     ),
     CUSTOM("Custom API", "Anthropic-compatible endpoint", ProviderProtocol.ANTHROPIC_GATEWAY, "", "", true),
+}
+
+/**
+ * Returns true when this provider can run or validate the given [model] without requiring
+ * a saved API key (e.g. self-hosted Custom API servers or free models on OpenCode CLI).
+ */
+fun ProviderKind.isKeylessAllowed(model: String = defaultModel): Boolean = when (this) {
+    ProviderKind.CUSTOM -> true
+    ProviderKind.OPENCODE_CLI -> {
+        val clean = model.trim().removePrefix("opencode/")
+        clean.endsWith("-free", ignoreCase = true) ||
+            clean.endsWith(":free", ignoreCase = true) ||
+            clean.equals("big-pickle", ignoreCase = true)
+    }
+    else -> false
 }
 
 /**
@@ -72,6 +96,12 @@ enum class AgentKind(
         "Google's official coding agent · Google account",
         "39.9 MB",
     ),
+    OPENCODE(
+        "opencode",
+        "OpenCode",
+        "Official OpenCode v2 agent · Zen + API providers",
+        "official installer",
+    ),
     ;
 
     companion object {
@@ -92,6 +122,18 @@ val DEEPSEEK_HARNESS_PROVIDERS: Set<ProviderKind> = setOf(
     ProviderKind.CUSTOM,
 )
 
+/** Provider kinds usable with [AgentKind.OPENCODE]. */
+val OPENCODE_PROVIDERS: List<ProviderKind> = listOf(
+    ProviderKind.OPENCODE_CLI,
+    ProviderKind.OPENCODE_ZEN,
+    ProviderKind.ANTHROPIC,
+    ProviderKind.LLM_ROUTER,
+    ProviderKind.DEEPSEEK,
+    ProviderKind.KIMI,
+    ProviderKind.NVIDIA_NIM,
+    ProviderKind.CUSTOM,
+)
+
 val DSH_PROTOCOL_PROVIDERS: Set<ProviderKind> = setOf(
     ProviderKind.KIMI,
     ProviderKind.OPENCODE_ZEN,
@@ -101,7 +143,7 @@ val DSH_PROTOCOL_PROVIDERS: Set<ProviderKind> = setOf(
 
 fun defaultDshApiForProvider(kind: ProviderKind): String = when (kind) {
     ProviderKind.OPENCODE_ZEN -> "openai-responses"
-    ProviderKind.NVIDIA_NIM -> "openai-completions"
+    ProviderKind.OPENCODE_CLI, ProviderKind.NVIDIA_NIM -> "openai-completions"
     else -> "anthropic-messages"
 }
 
@@ -134,8 +176,11 @@ fun providerProtocolForAgent(profile: ProviderProfile, agent: AgentKind): Provid
 
 /** Provider choices shown for the selected coding agent. */
 fun providersForAgent(agent: AgentKind): List<ProviderKind> = when (agent) {
+    AgentKind.OPENCODE -> OPENCODE_PROVIDERS
     AgentKind.DEEPSEEK_HARNESS -> ProviderKind.entries.filter { it in DEEPSEEK_HARNESS_PROVIDERS }
-    AgentKind.CLAUDE_CODE -> ProviderKind.entries.filterNot { it == ProviderKind.OPENCODE_ZEN }
+    AgentKind.CLAUDE_CODE -> ProviderKind.entries.filterNot {
+        it == ProviderKind.OPENCODE_ZEN || it == ProviderKind.OPENCODE_CLI
+    }
     AgentKind.ANTIGRAVITY -> emptyList()
 }
 
@@ -247,8 +292,8 @@ enum class RiskLevel { SAFE, REVIEW, HIGH }
 
 /**
  * Optional development toolchains the user can pick during onboarding.
- * Node.js, npm, Git, and Claude Code itself are always installed because the
- * agent runtime depends on them; these stacks add heavier extras on demand.
+ * Node.js, npm, Git, and the selected coding agent are installed as part of setup;
+ * these stacks add heavier extras on demand.
  */
 enum class DevStack(
     val label: String,

@@ -770,6 +770,7 @@ internal object DshRouteMapper {
                 defaultModel = model,
                 custom = DshCustomRoute(profile.dshApi.ifBlank { "anthropic-messages" }, profile.resolvedBaseUrl),
             )
+            ProviderKind.OPENCODE_CLI -> throw IllegalArgumentException("OpenCode CLI provider requires the OpenCode coding agent")
             ProviderKind.CLAUDE -> throw IllegalArgumentException("Claude subscription login is not supported by DeepSeek Harness")
         }
     }

@@ -230,6 +230,7 @@ import com.jarves.mh.model.ProjectChat
 import com.jarves.mh.model.ProviderKind
 import com.jarves.mh.model.ProviderProfile
 import com.jarves.mh.model.inferredDshApiForUrl
+import com.jarves.mh.model.isKeylessAllowed
 import com.jarves.mh.model.providersForAgent
 import com.jarves.mh.model.ToolRequest
 import com.jarves.mh.model.WorkspaceEntry
@@ -1520,6 +1521,7 @@ private const val CORE_RUNTIME_DOWNLOAD_MB = 69
 private const val CLAUDE_RUNTIME_DOWNLOAD_MB = 72
 private const val DSH_RUNTIME_DOWNLOAD_MB = 27
 private const val AGY_RUNTIME_DOWNLOAD_MB = 40
+private const val OPENCODE_RUNTIME_DOWNLOAD_MB = 35
 private const val PYTHON_RUNTIME_DOWNLOAD_MB = 55
 private const val ANDROID_RUNTIME_DOWNLOAD_MB = 570
 
@@ -1563,6 +1565,7 @@ private fun toolchainDownloadSummary(selected: Set<DevStack>, agent: AgentKind):
             AgentKind.CLAUDE_CODE -> CLAUDE_RUNTIME_DOWNLOAD_MB
             AgentKind.DEEPSEEK_HARNESS -> DSH_RUNTIME_DOWNLOAD_MB
             AgentKind.ANTIGRAVITY -> AGY_RUNTIME_DOWNLOAD_MB
+            AgentKind.OPENCODE -> OPENCODE_RUNTIME_DOWNLOAD_MB
         } +
         (if (DevStack.PYTHON in selected) PYTHON_RUNTIME_DOWNLOAD_MB else 0) +
         (if (DevStack.ANDROID in selected) ANDROID_RUNTIME_DOWNLOAD_MB else 0)
@@ -1652,11 +1655,13 @@ private fun AgentChoiceRow(
         AgentKind.CLAUDE_CODE -> Color(0xFFD97757)
         AgentKind.DEEPSEEK_HARNESS -> Color(0xFF4D6BFE)
         AgentKind.ANTIGRAVITY -> Color(0xFF4285F4)
+        AgentKind.OPENCODE -> Color(0xFF22C55E)
     }
     val mark = when (agent) {
         AgentKind.CLAUDE_CODE -> "CC"
         AgentKind.DEEPSEEK_HARNESS -> "DS"
         AgentKind.ANTIGRAVITY -> "AG"
+        AgentKind.OPENCODE -> "OC"
     }
     Row(
         modifier = Modifier
@@ -2691,12 +2696,12 @@ private fun ProviderSetupScreen(
     themeMode: AppThemeMode = AppThemeMode.DARK,
 ) {
     val context = LocalContext.current
-    var step by rememberSaveable { mutableIntStateOf(initialStep) }
-    var selected by rememberSaveable { mutableStateOf(initial.kind) }
-    var baseUrl by rememberSaveable { mutableStateOf(initial.baseUrl.ifBlank { initial.kind.defaultBaseUrl }) }
-    var model by rememberSaveable { mutableStateOf(initial.model.ifBlank { initial.kind.defaultModel }) }
-    var dshApi by rememberSaveable { mutableStateOf(initial.dshApi.ifBlank { "anthropic-messages" }) }
-    var apiKey by rememberSaveable { mutableStateOf("") }
+    var step by rememberSaveable(agentKind) { mutableIntStateOf(initialStep) }
+    var selected by rememberSaveable(agentKind, initial.kind) { mutableStateOf(initial.kind) }
+    var baseUrl by rememberSaveable(agentKind, initial.kind) { mutableStateOf(initial.baseUrl.ifBlank { initial.kind.defaultBaseUrl }) }
+    var model by rememberSaveable(agentKind, initial.kind) { mutableStateOf(initial.model.ifBlank { initial.kind.defaultModel }) }
+    var dshApi by rememberSaveable(agentKind, initial.kind) { mutableStateOf(initial.dshApi.ifBlank { "anthropic-messages" }) }
+    var apiKey by rememberSaveable(agentKind, initial.kind) { mutableStateOf("") }
     var showAgentPicker by rememberSaveable { mutableStateOf(false) }
 
     if (showAgentPicker) {
@@ -3008,6 +3013,7 @@ private fun providerTitleResource(provider: ProviderKind): Int = when (provider)
     ProviderKind.LLM_ROUTER -> R.string.provider_title_openrouter
     ProviderKind.DEEPSEEK -> R.string.provider_title_deepseek
     ProviderKind.KIMI -> R.string.provider_title_kimi
+    ProviderKind.OPENCODE_CLI -> R.string.provider_title_opencode_cli
     ProviderKind.OPENCODE_ZEN -> R.string.provider_title_opencode
     ProviderKind.NVIDIA_NIM -> R.string.provider_title_nvidia
     ProviderKind.CUSTOM -> R.string.provider_title_custom
@@ -3020,6 +3026,7 @@ private fun providerSubtitleResource(provider: ProviderKind): Int = when (provid
     ProviderKind.LLM_ROUTER -> R.string.provider_subtitle_openrouter
     ProviderKind.DEEPSEEK -> R.string.provider_subtitle_deepseek
     ProviderKind.KIMI, ProviderKind.CUSTOM -> R.string.provider_subtitle_anthropic_compatible
+    ProviderKind.OPENCODE_CLI -> R.string.provider_subtitle_opencode_cli
     ProviderKind.OPENCODE_ZEN -> R.string.provider_subtitle_opencode
     ProviderKind.NVIDIA_NIM -> R.string.provider_subtitle_nvidia
 }
@@ -3036,6 +3043,7 @@ private fun ProviderChoiceRow(
         ProviderKind.LLM_ROUTER -> Color(0xFF5B8DEF)
         ProviderKind.DEEPSEEK -> Color(0xFF4D6BFE)
         ProviderKind.KIMI -> Color(0xFF8B7CF6)
+        ProviderKind.OPENCODE_CLI -> Color(0xFF10B981)
         ProviderKind.OPENCODE_ZEN -> Color(0xFF22C55E)
         ProviderKind.NVIDIA_NIM -> Color(0xFF76B900)
         ProviderKind.CUSTOM -> PocketOrange
@@ -3046,6 +3054,7 @@ private fun ProviderChoiceRow(
         ProviderKind.LLM_ROUTER -> "OR"
         ProviderKind.DEEPSEEK -> "DS"
         ProviderKind.KIMI -> "K"
+        ProviderKind.OPENCODE_CLI -> "OC"
         ProviderKind.OPENCODE_ZEN -> "Z"
         ProviderKind.NVIDIA_NIM -> "NV"
         ProviderKind.CUSTOM -> "<>"
@@ -3149,7 +3158,7 @@ private fun ProviderCredentialsStep(
     var modelSearch by rememberSaveable { mutableStateOf("") }
     val modelSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     // Custom API servers that are self-hosted (llama.cpp, LM Studio…) often need no key.
-    val hasKey = apiKey.isNotBlank() || hasStoredSecret || provider == ProviderKind.CUSTOM
+    val hasKey = apiKey.isNotBlank() || hasStoredSecret || provider.isKeylessAllowed(model)
     val filteredModels = remember(models, modelSearch) {
         val query = modelSearch.trim()
         if (query.isEmpty()) models else models.filter {
@@ -3299,6 +3308,8 @@ private fun ProviderCredentialsStep(
             Spacer(Modifier.height(5.dp))
             Text(
                 when {
+                    provider == ProviderKind.OPENCODE_CLI || agentKind == AgentKind.OPENCODE ->
+                        stringResource(R.string.provider_endpoint_opencode)
                     agentKind == AgentKind.DEEPSEEK_HARNESS -> stringResource(R.string.provider_endpoint_deepseek)
                     provider.protocol.name.startsWith("OPENAI") -> stringResource(R.string.provider_endpoint_translate)
                     else -> stringResource(R.string.provider_endpoint_claude)
@@ -3332,7 +3343,17 @@ private fun ProviderCredentialsStep(
                         apiKey,
                         { onApiKey(it); status = null; statusDetails = null },
                         label = { Text(stringResource(R.string.provider_api_key)) },
-                        placeholder = { Text(stringResource(if (hasStoredSecret) R.string.provider_saved_key_placeholder else R.string.provider_enter_key)) },
+                        placeholder = {
+                            Text(
+                                stringResource(
+                                    when {
+                                        hasStoredSecret -> R.string.provider_saved_key_placeholder
+                                        provider == ProviderKind.OPENCODE_CLI -> R.string.provider_optional_key_placeholder
+                                        else -> R.string.provider_enter_key
+                                    },
+                                ),
+                            )
+                        },
                         supportingText = {
                             if (hasStoredSecret && apiKey.isBlank()) Text(stringResource(R.string.provider_saved_key_ready))
                         },
