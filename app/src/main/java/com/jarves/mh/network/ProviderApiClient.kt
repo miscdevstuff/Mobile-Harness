@@ -10,14 +10,24 @@ import com.jarves.mh.model.isKeylessAllowed
 import com.jarves.mh.runtime.OpencodeRuntimeBridge
 import com.jarves.mh.runtime.RuntimeInstaller
 import com.jarves.mh.ui.AppStrings
-import org.json.JSONArray
-import org.json.JSONObject
-import java.net.HttpURLConnection
-import java.net.URL
 import java.util.Locale
 import java.util.UUID
+import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
+import org.json.JSONArray
+import org.json.JSONObject
+
+/** Shared OkHttpClient instance so all network callers reuse connection pools and TLS sessions. */
+val sharedHttpClient: OkHttpClient = OkHttpClient.Builder()
+    .followRedirects(true)
+    .followSslRedirects(true)
+    .build()
 
 data class DiscoveredModel(val id: String, val displayName: String = id, val isFree: Boolean = false)
 
@@ -259,40 +269,46 @@ class ProviderApiClient(private val context: Context? = null) {
             return HttpResult(0, "", text(R.string.rt_api_http_public, "Plain http:// is only allowed for local network addresses. Use https:// for this server."))
         }
         return runCatching {
-            val connection = (URL(endpoint).openConnection() as HttpURLConnection).apply {
-                requestMethod = method
-                connectTimeout = connectTimeoutMs
-                readTimeout = readTimeoutMs
-                setRequestProperty("Accept", "application/json")
-                setRequestProperty("Content-Type", "application/json")
-                if (apiKey.isNotBlank()) {
-                    setRequestProperty("Authorization", "Bearer $apiKey")
-                }
-                if (endpoint.startsWith("https://opencode.ai/zen/")) {
-                    setRequestProperty("User-Agent", "opencode/1.18.20")
-                    setRequestProperty("x-session-id", "session-${UUID.randomUUID()}")
-                }
-                if (apiKey.isNotBlank() && protocol != ProviderProtocol.OPENROUTER && protocol != ProviderProtocol.OPENAI_CHAT && protocol != ProviderProtocol.OPENAI_RESPONSES) {
-                    setRequestProperty("x-api-key", apiKey)
-                    setRequestProperty("anthropic-version", "2023-06-01")
-                }
-                if (body != null) doOutput = true
-            }
-            if (body != null) connection.outputStream.use { it.write(body.toByteArray()) }
-            val code = connection.responseCode
-            val stream = if (code in 200..299) connection.inputStream else connection.errorStream
-            val responseBody = stream?.bufferedReader()?.use { reader ->
-                buildString {
-                    val buffer = CharArray(8 * 1024)
-                    while (length < MAX_PROVIDER_RESPONSE_CHARS) {
-                        val count = reader.read(buffer, 0, minOf(buffer.size, MAX_PROVIDER_RESPONSE_CHARS - length))
-                        if (count <= 0) break
-                        append(buffer, 0, count)
+            val client = sharedHttpClient.newBuilder()
+                .connectTimeout(connectTimeoutMs.toLong(), TimeUnit.MILLISECONDS)
+                .readTimeout(readTimeoutMs.toLong(), TimeUnit.MILLISECONDS)
+                .build()
+            val requestBuilder = Request.Builder()
+                .url(endpoint)
+                .header("Accept", "application/json")
+                .header("Content-Type", "application/json")
+                .apply {
+                    if (apiKey.isNotBlank()) {
+                        header("Authorization", "Bearer $apiKey")
                     }
+                    if (endpoint.startsWith("https://opencode.ai/zen/")) {
+                        header("User-Agent", "opencode/1.18.20")
+                        header("x-session-id", "session-${UUID.randomUUID()}")
+                    }
+                    if (apiKey.isNotBlank() &&
+                        protocol != ProviderProtocol.OPENROUTER &&
+                        protocol != ProviderProtocol.OPENAI_CHAT &&
+                        protocol != ProviderProtocol.OPENAI_RESPONSES
+                    ) {
+                        header("x-api-key", apiKey)
+                        header("anthropic-version", "2023-06-01")
+                    }
+                    val requestBody = body?.toRequestBody(JSON_MEDIA_TYPE)
+                    method(method, requestBody)
                 }
-            }.orEmpty()
-            connection.disconnect()
-            HttpResult(code, responseBody)
+            client.newCall(requestBuilder.build()).execute().use { response ->
+                val responseBody = response.body?.charStream()?.buffered()?.use { reader ->
+                    buildString {
+                        val buffer = CharArray(8 * 1024)
+                        while (length < MAX_PROVIDER_RESPONSE_CHARS) {
+                            val count = reader.read(buffer, 0, minOf(buffer.size, MAX_PROVIDER_RESPONSE_CHARS - length))
+                            if (count <= 0) break
+                            append(buffer, 0, count)
+                        }
+                    }
+                }.orEmpty()
+                HttpResult(response.code, responseBody)
+            }
         }.getOrElse { HttpResult(0, "", it.message ?: text(R.string.rt_api_network_failed, "Network connection failed")) }
     }
 
@@ -317,11 +333,11 @@ class ProviderApiClient(private val context: Context? = null) {
         }
     }
 
-    private fun isPublicCatalogEndpoint(endpoint: String): Boolean = runCatching {
-        val url = URL(endpoint)
-        (url.host.equals("openrouter.ai", ignoreCase = true) || url.host.equals("opencode.ai", ignoreCase = true)) &&
-            url.path.trimEnd('/').endsWith("/models")
-    }.getOrDefault(false)
+    private fun isPublicCatalogEndpoint(endpoint: String): Boolean {
+        val url = endpoint.toHttpUrlOrNull() ?: return false
+        return (url.host.equals("openrouter.ai", ignoreCase = true) || url.host.equals("opencode.ai", ignoreCase = true)) &&
+            url.encodedPath.trimEnd('/').endsWith("/models")
+    }
 
     internal fun validationBody(
         model: String,
@@ -403,6 +419,7 @@ class ProviderApiClient(private val context: Context? = null) {
     private companion object {
         const val VALIDATION_MAX_TOKENS = 8
         const val MAX_PROVIDER_RESPONSE_CHARS = 2 * 1024 * 1024
+        val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
     }
 }
 

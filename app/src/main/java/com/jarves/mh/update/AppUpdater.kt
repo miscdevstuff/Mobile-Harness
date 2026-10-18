@@ -5,11 +5,12 @@ import android.content.pm.PackageManager
 import android.os.Build
 import com.jarves.mh.BuildConfig
 import com.jarves.mh.R
+import com.jarves.mh.network.sharedHttpClient
 import com.jarves.mh.ui.AppStrings
 import java.io.File
-import java.net.HttpURLConnection
-import java.net.URL
 import java.security.MessageDigest
+import java.util.concurrent.TimeUnit
+import okhttp3.Request
 import org.json.JSONObject
 
 data class AppUpdateInfo(
@@ -38,15 +39,18 @@ class AppUpdater(
     fun check(): AppUpdateInfo? {
         val manifestUrl = manifestUrlOverride.ifBlank { BuildConfig.APP_UPDATE_MANIFEST_URL }
         if (!manifestUrl.startsWith("https://")) return null
-        val connection = URL(manifestUrl).openConnection() as HttpURLConnection
-        return try {
-            connection.connectTimeout = 8_000
-            connection.readTimeout = 10_000
-            connection.instanceFollowRedirects = true
-            connection.setRequestProperty("Accept", "application/json")
-            val code = connection.responseCode
-            if (code !in 200..299) return null
-            val body = connection.inputStream.bufferedReader().use { it.readText() }
+        val client = sharedHttpClient.newBuilder()
+            .connectTimeout(8, TimeUnit.SECONDS)
+            .readTimeout(10, TimeUnit.SECONDS)
+            .build()
+        val request = Request.Builder()
+            .url(manifestUrl)
+            .header("Accept", "application/json")
+            .get()
+            .build()
+        client.newCall(request).execute().use { response ->
+            if (!response.isSuccessful) return null
+            val body = response.body?.string().orEmpty()
             val root = JSONObject(body)
             val versionCode = root.optLong("versionCode")
             if (versionCode <= BuildConfig.VERSION_CODE) return null
@@ -55,7 +59,7 @@ class AppUpdater(
                 ?: root
             val url = artifact.optString("url").ifBlank { artifact.optString("apkUrl") }
             if (!url.startsWith("https://")) return null
-            AppUpdateInfo(
+            return AppUpdateInfo(
                 versionCode = versionCode,
                 versionName = root.optString("versionName", versionCode.toString()),
                 apkUrl = url,
@@ -63,8 +67,6 @@ class AppUpdater(
                 sizeBytes = artifact.optLong("sizeBytes", -1L),
                 notes = root.optString("notes"),
             )
-        } finally {
-            connection.disconnect()
         }
     }
 
@@ -72,15 +74,16 @@ class AppUpdater(
         val directory = File(context.filesDir, "updates").also { it.mkdirs() }
         val partial = File(directory, "mobile-harness-${BuildConfig.APP_VARIANT}.apk.part")
         val target = File(directory, "mobile-harness-${BuildConfig.APP_VARIANT}.apk")
-        val connection = URL(info.apkUrl).openConnection() as HttpURLConnection
-        try {
-            connection.connectTimeout = 15_000
-            connection.readTimeout = 30_000
-            connection.instanceFollowRedirects = true
-            val code = connection.responseCode
-            check(code in 200..299) { str(R.string.rt_update_download_failed, code) }
-            val total = connection.contentLengthLong.takeIf { it > 0 } ?: info.sizeBytes
-            connection.inputStream.use { input ->
+        val client = sharedHttpClient.newBuilder()
+            .connectTimeout(15, TimeUnit.SECONDS)
+            .readTimeout(30, TimeUnit.SECONDS)
+            .build()
+        val request = Request.Builder().url(info.apkUrl).get().build()
+        client.newCall(request).execute().use { response ->
+            check(response.isSuccessful) { str(R.string.rt_update_download_failed, response.code) }
+            val responseBody = checkNotNull(response.body) { str(R.string.rt_update_download_failed, response.code) }
+            val total = responseBody.contentLength().takeIf { it > 0 } ?: info.sizeBytes
+            responseBody.byteStream().use { input ->
                 partial.outputStream().use { output ->
                     val buffer = ByteArray(128 * 1024)
                     var downloaded = 0L
@@ -93,8 +96,6 @@ class AppUpdater(
                     }
                 }
             }
-        } finally {
-            connection.disconnect()
         }
         if (info.sha256.isNotBlank()) {
             val actual = sha256(partial)

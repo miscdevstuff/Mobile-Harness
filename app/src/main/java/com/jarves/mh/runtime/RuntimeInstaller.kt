@@ -12,8 +12,9 @@ import java.io.BufferedInputStream
 import java.io.File
 import java.io.FileOutputStream
 import java.io.RandomAccessFile
-import java.net.HttpURLConnection
-import java.net.URL
+import com.jarves.mh.network.sharedHttpClient
+import java.util.concurrent.TimeUnit
+import okhttp3.Request
 import java.security.MessageDigest
 import java.util.zip.ZipInputStream
 import kotlinx.coroutines.delay
@@ -1970,32 +1971,36 @@ printf '%s\n' '{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decis
         }
         val temporary = File(destination.parentFile, "${destination.name}.part")
         var existing = temporary.takeIf(File::isFile)?.length() ?: 0L
-        val connection = URL(url).openConnection() as HttpURLConnection
-        connection.connectTimeout = 20_000
-        connection.readTimeout = 120_000
-        connection.instanceFollowRedirects = true
-        if (existing > 0L) connection.setRequestProperty("Range", "bytes=$existing-")
-        check(connection.responseCode in 200..299) { str(R.string.rt_install_download_failed_http, connection.responseCode) }
-        val resumed = connection.responseCode == HttpURLConnection.HTTP_PARTIAL && existing > 0L
-        if (!resumed) {
-            temporary.delete()
-            existing = 0L
-        }
-        val total = connection.contentLengthLong.takeIf { it >= 0L }?.plus(existing) ?: -1L
-        connection.inputStream.use { input ->
-            FileOutputStream(temporary, resumed).use { output ->
-                val buffer = ByteArray(128 * 1024)
-                var downloaded = existing
-                while (true) {
-                    val count = input.read(buffer)
-                    if (count < 0) break
-                    output.write(buffer, 0, count)
-                    downloaded += count
-                    onBytes(downloaded, total)
+        val client = sharedHttpClient.newBuilder()
+            .connectTimeout(20, TimeUnit.SECONDS)
+            .readTimeout(120, TimeUnit.SECONDS)
+            .build()
+        val requestBuilder = Request.Builder().url(url).get()
+        if (existing > 0L) requestBuilder.header("Range", "bytes=$existing-")
+        client.newCall(requestBuilder.build()).execute().use { response ->
+            check(response.isSuccessful) { str(R.string.rt_install_download_failed_http, response.code) }
+            val resumed = response.code == 206 && existing > 0L
+            if (!resumed) {
+                temporary.delete()
+                existing = 0L
+            }
+            val body = checkNotNull(response.body) { str(R.string.rt_install_download_failed_http, response.code) }
+            val total = body.contentLength().takeIf { it >= 0L }?.plus(existing) ?: -1L
+            body.byteStream().use { input ->
+                FileOutputStream(temporary, resumed).use { output ->
+                    val buffer = ByteArray(128 * 1024)
+                    var downloaded = existing
+                    while (true) {
+                        coroutineContext.ensureActive()
+                        val count = input.read(buffer)
+                        if (count < 0) break
+                        output.write(buffer, 0, count)
+                        downloaded += count
+                        onBytes(downloaded, total)
+                    }
                 }
             }
         }
-        connection.disconnect()
         val actual = digest(temporary, algorithm)
         if (!actual.equals(expectedChecksum, ignoreCase = true)) {
             temporary.delete()
@@ -2006,12 +2011,19 @@ printf '%s\n' '{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decis
     }
 
     private fun fetchText(url: String): String {
-        val connection = URL(url).openConnection() as HttpURLConnection
-        connection.connectTimeout = 15_000
-        connection.readTimeout = 30_000
-        connection.setRequestProperty("Accept", "application/json")
-        check(connection.responseCode in 200..299) { "Request failed with HTTP ${connection.responseCode}" }
-        return connection.inputStream.bufferedReader().use { it.readText() }.also { connection.disconnect() }
+        val client = sharedHttpClient.newBuilder()
+            .connectTimeout(15, TimeUnit.SECONDS)
+            .readTimeout(30, TimeUnit.SECONDS)
+            .build()
+        val request = Request.Builder()
+            .url(url)
+            .header("Accept", "application/json")
+            .get()
+            .build()
+        client.newCall(request).execute().use { response ->
+            check(response.isSuccessful) { "Request failed with HTTP ${response.code}" }
+            return response.body?.string().orEmpty()
+        }
     }
 
     private fun digest(file: File, algorithm: String): String {
