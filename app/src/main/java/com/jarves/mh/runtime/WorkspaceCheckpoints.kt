@@ -1,11 +1,12 @@
 package com.jarves.mh.runtime
 
 import android.content.Context
+import com.github.difflib.DiffUtils
 import com.jarves.mh.R
 import com.jarves.mh.model.ChangeItem
-import com.jarves.mh.ui.AppStrings
 import com.jarves.mh.model.DiffLine
 import com.jarves.mh.model.DiffLineType
+import com.jarves.mh.ui.AppStrings
 import java.io.File
 import java.security.MessageDigest
 import java.util.concurrent.ConcurrentHashMap
@@ -61,7 +62,7 @@ class WorkspaceCheckpoints(
                 val relative = if (directory == workspace) "" else directory.relativeTo(workspace).invariantSeparatorsPath
                 directory == workspace || (!isInternalRuntimePath(relative) &&
                     !java.nio.file.Files.isSymbolicLink(directory.toPath()) &&
-                        runCatching { directory.canonicalFile.toPath().startsWith(workspacePath) }.getOrDefault(false)
+                    runCatching { directory.canonicalFile.toPath().startsWith(workspacePath) }.getOrDefault(false)
                     )
             }
             .filter {
@@ -157,36 +158,29 @@ class WorkspaceCheckpoints(
             )
         }
 
-        val lcs = Array(before.size + 1) { IntArray(after.size + 1) }
-        for (oldIndex in before.lastIndex downTo 0) {
-            for (newIndex in after.lastIndex downTo 0) {
-                lcs[oldIndex][newIndex] = if (before[oldIndex] == after[newIndex]) {
-                    lcs[oldIndex + 1][newIndex + 1] + 1
-                } else {
-                    maxOf(lcs[oldIndex + 1][newIndex], lcs[oldIndex][newIndex + 1])
-                }
-            }
-        }
-
+        val patch = DiffUtils.diff(before, after)
         val result = mutableListOf<DiffLine>()
         var oldIndex = 0
         var newIndex = 0
-        while (oldIndex < before.size || newIndex < after.size) {
-            when {
-                oldIndex < before.size && newIndex < after.size && before[oldIndex] == after[newIndex] -> {
-                    result += DiffLine(DiffLineType.CONTEXT, before[oldIndex], oldIndex + 1, newIndex + 1)
-                    oldIndex++
-                    newIndex++
-                }
-                newIndex < after.size && (oldIndex == before.size || lcs[oldIndex][newIndex + 1] >= lcs[oldIndex + 1][newIndex]) -> {
-                    result += DiffLine(DiffLineType.ADDITION, after[newIndex], null, newIndex + 1)
-                    newIndex++
-                }
-                oldIndex < before.size -> {
-                    result += DiffLine(DiffLineType.DELETION, before[oldIndex], oldIndex + 1, null)
-                    oldIndex++
-                }
+        for (delta in patch.deltas) {
+            while (oldIndex < delta.source.position && newIndex < delta.target.position) {
+                result += DiffLine(DiffLineType.CONTEXT, before[oldIndex], oldIndex + 1, newIndex + 1)
+                oldIndex++
+                newIndex++
             }
+            for (line in delta.source.lines) {
+                result += DiffLine(DiffLineType.DELETION, line, oldIndex + 1, null)
+                oldIndex++
+            }
+            for (line in delta.target.lines) {
+                result += DiffLine(DiffLineType.ADDITION, line, null, newIndex + 1)
+                newIndex++
+            }
+        }
+        while (oldIndex < before.size && newIndex < after.size) {
+            result += DiffLine(DiffLineType.CONTEXT, before[oldIndex], oldIndex + 1, newIndex + 1)
+            oldIndex++
+            newIndex++
         }
         return collapseUnchangedLines(result)
     }
@@ -223,20 +217,10 @@ class WorkspaceCheckpoints(
         if (before.size > MAX_DIFF_LINES || after.size > MAX_DIFF_LINES) {
             return maxOf(0, after.size - before.size) to maxOf(0, before.size - after.size)
         }
-        var previous = IntArray(after.size + 1)
-        before.forEach { oldLine ->
-            val current = IntArray(after.size + 1)
-            after.forEachIndexed { index, newLine ->
-                current[index + 1] = if (oldLine == newLine) {
-                    previous[index] + 1
-                } else {
-                    maxOf(previous[index + 1], current[index])
-                }
-            }
-            previous = current
-        }
-        val common = previous[after.size]
-        return (after.size - common) to (before.size - common)
+        val patch = DiffUtils.diff(before, after)
+        val additions = patch.deltas.sumOf { it.target.lines.size }
+        val deletions = patch.deltas.sumOf { it.source.lines.size }
+        return additions to deletions
     }
 
     private fun textLines(bytes: ByteArray): List<String> {
