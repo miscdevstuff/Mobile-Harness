@@ -426,3 +426,12 @@ data class ActivityItem(
     val isComplete: Boolean = true,
     val isCommand: Boolean = false,
 )
+
+data class GitHubRepository(
+    val fullName: String,
+    val cloneUrl: String,
+    val private: Boolean,
+    val defaultBranch: String,
+    val description: String,
+    val updatedAt: String,
+)

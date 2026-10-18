@@ -258,7 +258,7 @@ import androidx.compose.ui.text.AnnotatedString
 import com.jarves.mh.network.ConnectionValidation
 import com.jarves.mh.network.DiscoveredModel
 import com.jarves.mh.network.ModelDiscoveryResult
-import com.jarves.mh.network.GitHubRepository
+import com.jarves.mh.model.GitHubRepository
 import com.jarves.mh.ui.theme.PocketBlue
 import com.jarves.mh.ui.theme.PocketGreen
 import com.jarves.mh.ui.theme.PocketOrange
