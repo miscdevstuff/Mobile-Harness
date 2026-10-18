@@ -12,6 +12,7 @@ import androidx.core.app.NotificationCompat
 import com.jarves.mh.MainActivity
 import com.jarves.mh.R
 import com.jarves.mh.data.AppPreferences
+import com.jarves.mh.data.appJson
 import com.jarves.mh.model.DevStack
 import com.jarves.mh.ui.AppStrings
 import java.io.File
@@ -22,16 +23,17 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import org.json.JSONArray
-import org.json.JSONObject
+import kotlinx.coroutines.launch
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.encodeToString
 
+@Serializable
 enum class RuntimeSetupStatus { IDLE, RUNNING, COMPLETE, ERROR, CANCELLED }
 
+@Serializable
 data class RuntimeSetupSnapshot(
     val status: RuntimeSetupStatus = RuntimeSetupStatus.IDLE,
     val message: String = "Preparing your private coding workspace",
@@ -53,20 +55,11 @@ object RuntimeSetupController {
         val file = stateFile(context)
         if (!file.isFile) return
         runCatching {
-            val json = JSONObject(file.readText())
-            val logsJson = json.optJSONArray("logs") ?: JSONArray()
-            val logs = (0 until logsJson.length()).map { logsJson.optString(it) }
-            mutableSnapshot.value = RuntimeSetupSnapshot(
-                status = runCatching { RuntimeSetupStatus.valueOf(json.optString("status")) }
-                    .getOrDefault(RuntimeSetupStatus.IDLE),
-                message = json.optString("message", AppStrings.get(context, R.string.rt_setup_preparing_workspace)),
-                progress = json.optDouble("progress", 0.0).toFloat(),
-                downloadedBytes = json.optLongOrNull("downloadedBytes"),
-                totalBytes = json.optLongOrNull("totalBytes"),
-                indeterminate = json.optBoolean("indeterminate"),
-                logs = logs.takeLast(MAX_LOG_LINES),
-                errorMessage = json.optString("errorMessage").takeIf(String::isNotBlank),
-                offline = json.optBoolean("offline"),
+            val decoded = appJson.decodeFromString<RuntimeSetupSnapshot>(file.readText())
+            mutableSnapshot.value = decoded.copy(
+                message = decoded.message.ifBlank { AppStrings.get(context, R.string.rt_setup_preparing_workspace) },
+                logs = decoded.logs.takeLast(MAX_LOG_LINES),
+                errorMessage = decoded.errorMessage?.takeIf(String::isNotBlank),
             )
         }
     }
@@ -207,19 +200,9 @@ object RuntimeSetupController {
     }
 
     private fun persist(context: Context, value: RuntimeSetupSnapshot) {
-        val json = JSONObject()
-            .put("status", value.status.name)
-            .put("message", value.message)
-            .put("progress", value.progress)
-            .put("indeterminate", value.indeterminate)
-            .put("offline", value.offline)
-            .put("logs", JSONArray(value.logs))
-        value.downloadedBytes?.let { json.put("downloadedBytes", it) }
-        value.totalBytes?.let { json.put("totalBytes", it) }
-        value.errorMessage?.let { json.put("errorMessage", it) }
         val target = stateFile(context)
         val staged = File(target.parentFile, "${target.name}.tmp")
-        staged.writeText(json.toString())
+        staged.writeText(appJson.encodeToString(value))
         target.delete()
         staged.renameTo(target)
     }
@@ -238,7 +221,6 @@ object RuntimeSetupController {
     private fun sanitize(line: String): String = line.filter { it == '\t' || it.code >= 32 }.take(500)
     private fun stateFile(context: Context) = File(context.filesDir, "setup/runtime-setup-state.json").apply { parentFile?.mkdirs() }
     private fun logFile(context: Context) = File(context.filesDir, "setup/runtime-setup.log")
-    private fun JSONObject.optLongOrNull(name: String): Long? = if (has(name) && !isNull(name)) optLong(name) else null
 
     private const val MAX_LOG_LINES = 400
     private const val MAX_LOG_BYTES = 1_000_000L

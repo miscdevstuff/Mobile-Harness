@@ -1,10 +1,29 @@
 package com.jarves.mh.model
 
-import java.time.Instant
 import java.text.Normalizer
+import java.time.Instant
 import java.util.Locale
 import java.util.UUID
 import kotlin.random.Random
+import kotlinx.serialization.KSerializer
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.descriptors.PrimitiveKind
+import kotlinx.serialization.descriptors.PrimitiveSerialDescriptor
+import kotlinx.serialization.descriptors.SerialDescriptor
+import kotlinx.serialization.encoding.Decoder
+import kotlinx.serialization.encoding.Encoder
+
+object InstantIsoSerializer : KSerializer<Instant> {
+    override val descriptor: SerialDescriptor =
+        PrimitiveSerialDescriptor("java.time.Instant", PrimitiveKind.STRING)
+
+    override fun serialize(encoder: Encoder, value: Instant) {
+        encoder.encodeString(value.toString())
+    }
+
+    override fun deserialize(decoder: Decoder): Instant =
+        runCatching { Instant.parse(decoder.decodeString()) }.getOrDefault(Instant.now())
+}
 
 enum class ProviderProtocol { CLAUDE_LOGIN, ANTHROPIC, ANTHROPIC_GATEWAY, OPENROUTER, OPENAI_RESPONSES, OPENAI_CHAT }
 
@@ -377,24 +396,28 @@ sealed interface RuntimeEvent {
     data class SessionFailed(override val sessionId: String, val reason: String) : RuntimeEvent
 }
 
+@Serializable
 data class ChatMessage(
     val id: String = UUID.randomUUID().toString(),
     val fromUser: Boolean,
     val text: String,
+    @Serializable(with = InstantIsoSerializer::class)
     val createdAt: Instant = Instant.now(),
     val attachments: List<ChatAttachment> = emptyList(),
     val workItems: List<ActivityItem> = emptyList(),
     val workedMillis: Long = 0L,
 )
 
+@Serializable
 data class ChatAttachment(
     val id: String = UUID.randomUUID().toString(),
     val displayName: String,
     val relativePath: String,
-    val mimeType: String,
-    val sizeBytes: Long,
+    val mimeType: String = "application/octet-stream",
+    val sizeBytes: Long = 0L,
 )
 
+@Serializable
 data class ProjectChat(
     val id: String = UUID.randomUUID().toString(),
     val title: String = "New chat",
@@ -420,13 +443,15 @@ data class ChangeItem(
     val accepted: Boolean? = null,
 )
 
+@Serializable
 data class ActivityItem(
-    val title: String,
-    val detail: String,
+    val title: String = "",
+    val detail: String = "",
     val isComplete: Boolean = true,
     val isCommand: Boolean = false,
 )
 
+@Serializable
 data class GitHubRepository(
     val fullName: String,
     val cloneUrl: String,

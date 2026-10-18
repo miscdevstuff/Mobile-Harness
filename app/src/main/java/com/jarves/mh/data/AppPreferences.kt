@@ -2,26 +2,46 @@ package com.jarves.mh.data
 
 import android.content.Context
 import com.jarves.mh.model.AgentKind
+import com.jarves.mh.model.AndroidTemplate
 import com.jarves.mh.model.ChatMessage
-import com.jarves.mh.model.ChatAttachment
 import com.jarves.mh.model.Project
+import com.jarves.mh.model.ProjectChat
 import com.jarves.mh.model.ProjectKind
 import com.jarves.mh.model.ProjectType
-import com.jarves.mh.model.AndroidTemplate
-import com.jarves.mh.model.ProjectChat
 import com.jarves.mh.model.ProviderKind
 import com.jarves.mh.model.ProviderProfile
 import com.jarves.mh.model.defaultDshApiForProvider
 import com.jarves.mh.model.projectSlug
 import com.jarves.mh.model.providersForAgent
-import org.json.JSONArray
-import org.json.JSONObject
 import java.io.File
-import java.time.Instant
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
+
+internal val appJson = Json {
+    ignoreUnknownKeys = true
+    encodeDefaults = true
+    explicitNulls = false
+}
+
+@Serializable
+private data class StoredProject(
+    val id: String,
+    val name: String,
+    val description: String = "",
+    val language: String = "",
+    val slug: String = "",
+    val rootPath: String = "",
+    val updatedAtMillis: Long = 0L,
+    val kind: String? = null,
+    val type: String = ProjectType.GENERAL.name,
+    val androidTemplate: String? = null,
+)
 
 /**
- * Resolves the active secret for [kind], sharing saved OpenCode keys between
- * [ProviderKind.OPENCODE_CLI] and [ProviderKind.OPENCODE_ZEN] when one is empty.
+ * Resolves the active secret for [kind]. [ProviderKind.OPENCODE_ZEN] (HTTP API) can fall back
+ * to a key saved under [ProviderKind.OPENCODE_CLI], while [ProviderKind.OPENCODE_CLI] only uses
+ * keys explicitly saved in its own pool so free models can run keyless when its pool is empty.
  */
 fun resolveProviderSecret(vault: ApiKeyVault, kind: ProviderKind): String? {
     vault.get(kind.name)?.takeIf(String::isNotBlank)?.let { return it }
@@ -101,6 +121,8 @@ class AppPreferences(private val context: Context) {
     }
 
     private fun agentConversationKey(agent: AgentKind, projectId: String, chatId: String): String {
+        // Antigravity v2 sessions are created with an explicit CLI project so
+        // old default-project conversations cannot redirect writes to scratch.
         val version = if (agent == AgentKind.ANTIGRAVITY) "v2_" else ""
         return "agent_conversation_${version}${agent.stableId}_${projectId}_$chatId"
     }
@@ -130,6 +152,11 @@ class AppPreferences(private val context: Context) {
         get() = preferences.getLong("last_app_update_check_millis", 0L)
         set(value) { preferences.edit().putLong("last_app_update_check_millis", value).apply() }
 
+    /**
+     * Debug-only manifest URL override. Empty in release builds; populated via
+     * Settings → Update channel in debug builds so a local server (exposed via
+     * Cloudflare Tunnel or ngrok) can be tested without publishing a release.
+     */
     var debugUpdateManifestUrl: String
         get() = preferences.getString("debug_update_manifest_url", "") ?: ""
         set(value) { preferences.edit().putString("debug_update_manifest_url", value).apply() }
@@ -139,14 +166,11 @@ class AppPreferences(private val context: Context) {
         get() {
             val raw = preferences.getString("selected_dev_stacks", null) ?: return emptySet()
             return runCatching {
-                val arr = JSONArray(raw)
-                (0 until arr.length()).mapNotNull { arr.optString(it).takeIf(String::isNotBlank) }.toSet()
+                appJson.decodeFromString<List<String>>(raw).filter(String::isNotBlank).toSet()
             }.getOrDefault(emptySet())
         }
         set(value) {
-            val arr = JSONArray()
-            value.sorted().forEach(arr::put)
-            preferences.edit().putString("selected_dev_stacks", arr.toString()).apply()
+            preferences.edit().putString("selected_dev_stacks", appJson.encodeToString(value.sorted())).apply()
         }
 
     fun saveProvider(profile: ProviderProfile, agent: AgentKind? = null) {
@@ -183,6 +207,9 @@ class AppPreferences(private val context: Context) {
         val storedModel = storedKind?.let {
             preferences.getString("${sourcePrefix}model", it.defaultModel) ?: it.defaultModel
         }.orEmpty()
+        // Older builds copied the global Claude/Anthropic default into a new
+        // agent profile. Treat that untouched, keyless placeholder as
+        // unconfigured so each agent opens on its own official default provider.
         val legacyClaudeDefaultInDeepSeek = agent == AgentKind.DEEPSEEK_HARNESS &&
             storedKind == ProviderKind.ANTHROPIC &&
             !vault.contains(ProviderKind.ANTHROPIC.name) &&
@@ -208,6 +235,8 @@ class AppPreferences(private val context: Context) {
         } else {
             kind.defaultModel
         }
+        // DeepSeek retired its legacy alias. Migrate only DeepSeek profiles so
+        // custom and gateway providers keep their independently selected model.
         val model = if (
             kind == ProviderKind.DEEPSEEK &&
             savedModel in setOf("deepseek-chat", "deepseek-reasoner")
@@ -249,47 +278,43 @@ class AppPreferences(private val context: Context) {
     private fun providerPrefix(agent: AgentKind): String = "provider_${agent.stableId.replace('-', '_')}_"
 
     fun saveProjects(projects: List<Project>) {
-        val arr = JSONArray()
-        projects.forEach { p ->
-            arr.put(JSONObject().apply {
-                put("id", p.id)
-                put("name", p.name)
-                put("description", p.description)
-                put("language", p.language)
-                put("slug", p.slug)
-                put("rootPath", p.rootPath)
-                put("updatedAtMillis", p.updatedAtMillis)
-                put("kind", p.kind.name)
-                put("type", p.type.name)
-                p.androidTemplate?.let { put("androidTemplate", it.name) }
-            })
+        val stored = projects.map { p ->
+            StoredProject(
+                id = p.id,
+                name = p.name,
+                description = p.description,
+                language = p.language,
+                slug = p.slug,
+                rootPath = p.rootPath,
+                updatedAtMillis = p.updatedAtMillis,
+                kind = p.kind.name,
+                type = p.type.name,
+                androidTemplate = p.androidTemplate?.name,
+            )
         }
-        preferences.edit().putString("projects_json", arr.toString()).apply()
+        preferences.edit().putString("projects_json", appJson.encodeToString(stored)).apply()
     }
 
     fun loadProjects(): List<Project> {
         val raw = preferences.getString("projects_json", null) ?: return emptyList()
         var needsSave = false
         val list = runCatching {
-            val arr = JSONArray(raw)
+            val storedList = appJson.decodeFromString<List<StoredProject>>(raw)
             val usedSlugs = mutableSetOf<String>()
-            (0 until arr.length()).map { i ->
-                val obj = arr.getJSONObject(i)
-                val id = obj.getString("id")
-                val name = obj.getString("name")
-                val storedKind = obj.optString("kind", ProjectKind.PROJECT.name)
-                if (!obj.has("kind") || storedKind == "QUICK_CHAT") needsSave = true
-                val requestedSlug = obj.optString("slug").ifBlank { projectSlug(name) }
+            storedList.map { item ->
+                val storedKind = item.kind ?: ProjectKind.PROJECT.name
+                if (item.kind == null || storedKind == "QUICK_CHAT") needsSave = true
+                val requestedSlug = item.slug.ifBlank { projectSlug(item.name) }
                 var slug = requestedSlug
                 if (!usedSlugs.add(slug)) {
-                    slug = "$requestedSlug-${id.take(6)}"
+                    slug = "$requestedSlug-${item.id.take(6)}"
                     var suffix = 2
                     while (!usedSlugs.add(slug)) slug = "$requestedSlug-${suffix++}"
                 }
-                if (slug != obj.optString("slug")) needsSave = true
-                var millis = obj.optLong("updatedAtMillis", 0L)
+                if (slug != item.slug) needsSave = true
+                var millis = item.updatedAtMillis
                 if (millis <= 0L) {
-                    val workspaceDir = File(context.filesDir, "workspaces/$id")
+                    val workspaceDir = File(context.filesDir, "workspaces/${item.id}")
                     millis = if (workspaceDir.exists() && workspaceDir.lastModified() > 0L) {
                         workspaceDir.lastModified()
                     } else {
@@ -298,12 +323,12 @@ class AppPreferences(private val context: Context) {
                     needsSave = true
                 }
                 Project(
-                    id = id,
-                    name = name,
-                    description = obj.optString("description", ""),
-                    language = obj.optString("language", ""),
+                    id = item.id,
+                    name = item.name,
+                    description = item.description,
+                    language = item.language,
                     slug = slug,
-                    rootPath = obj.optString("rootPath", "").takeIf { root ->
+                    rootPath = item.rootPath.takeIf { root ->
                         root.isBlank() || (!root.startsWith('/') && !root.contains(".."))
                     } ?: "",
                     updatedAtMillis = millis,
@@ -312,10 +337,9 @@ class AppPreferences(private val context: Context) {
                         else -> runCatching { ProjectKind.valueOf(storedKind) }
                             .getOrDefault(ProjectKind.PROJECT)
                     },
-                    type = runCatching {
-                        ProjectType.valueOf(obj.optString("type", ProjectType.GENERAL.name))
-                    }.getOrDefault(ProjectType.GENERAL),
-                    androidTemplate = obj.optString("androidTemplate").takeIf(String::isNotBlank)?.let {
+                    type = runCatching { ProjectType.valueOf(item.type) }
+                        .getOrDefault(ProjectType.GENERAL),
+                    androidTemplate = item.androidTemplate?.takeIf(String::isNotBlank)?.let {
                         runCatching { AndroidTemplate.valueOf(it) }.getOrNull()
                     },
                 )
@@ -332,16 +356,7 @@ class AppPreferences(private val context: Context) {
 
     fun saveProjectChats(projectId: String, chats: List<ProjectChat>) {
         val projectDir = File(chatsDir, projectId).also { it.mkdirs() }
-        val arr = JSONArray()
-        chats.forEach { chat ->
-            arr.put(JSONObject().apply {
-                put("id", chat.id)
-                put("title", chat.title)
-                put("createdAtMillis", chat.createdAtMillis)
-                put("updatedAtMillis", chat.updatedAtMillis)
-            })
-        }
-        File(projectDir, "index.json").writeText(arr.toString())
+        File(projectDir, "index.json").writeText(appJson.encodeToString(chats))
     }
 
     fun loadProjectChats(projectId: String): List<ProjectChat> {
@@ -349,19 +364,12 @@ class AppPreferences(private val context: Context) {
         val index = File(projectDir, "index.json")
         if (index.exists()) {
             return runCatching {
-                val arr = JSONArray(index.readText())
-                (0 until arr.length()).map { i ->
-                    val obj = arr.getJSONObject(i)
-                    ProjectChat(
-                        id = obj.getString("id"),
-                        title = obj.optString("title", "Chat"),
-                        createdAtMillis = obj.optLong("createdAtMillis", System.currentTimeMillis()),
-                        updatedAtMillis = obj.optLong("updatedAtMillis", System.currentTimeMillis()),
-                    )
-                }.sortedByDescending { it.updatedAtMillis }
+                appJson.decodeFromString<List<ProjectChat>>(index.readText())
+                    .sortedByDescending { it.updatedAtMillis }
             }.getOrDefault(emptyList())
         }
 
+        // Migrate the original one-file-per-project conversation without losing it.
         val legacy = File(chatsDir, "$projectId.json")
         val legacyMessages = loadLegacyMessages(legacy)
         val now = System.currentTimeMillis()
@@ -378,41 +386,10 @@ class AppPreferences(private val context: Context) {
 
     @Synchronized
     fun saveMessages(projectId: String, chatId: String, messages: List<ChatMessage>) {
-        val arr = JSONArray()
-        messages.forEach { m ->
-            arr.put(JSONObject().apply {
-                put("id", m.id)
-                put("fromUser", m.fromUser)
-                put("text", m.text)
-                put("createdAt", m.createdAt.toString())
-                put("attachments", JSONArray().apply {
-                    m.attachments.forEach { attachment ->
-                        put(JSONObject().apply {
-                            put("id", attachment.id)
-                            put("displayName", attachment.displayName)
-                            put("relativePath", attachment.relativePath)
-                            put("mimeType", attachment.mimeType)
-                            put("sizeBytes", attachment.sizeBytes)
-                        })
-                    }
-                })
-                put("workedMillis", m.workedMillis)
-                put("workItems", JSONArray().apply {
-                    m.workItems.forEach { item ->
-                        put(JSONObject().apply {
-                            put("title", item.title)
-                            put("detail", item.detail)
-                            put("isComplete", item.isComplete)
-                            put("isCommand", item.isCommand)
-                        })
-                    }
-                })
-            })
-        }
         val projectDir = File(chatsDir, projectId).also { it.mkdirs() }
         val destination = File(projectDir, "$chatId.json")
         val temporary = File(projectDir, ".$chatId.json.tmp")
-        temporary.writeText(arr.toString())
+        temporary.writeText(appJson.encodeToString(messages))
         if (!temporary.renameTo(destination)) {
             temporary.copyTo(destination, overwrite = true)
             temporary.delete()
@@ -432,47 +409,7 @@ class AppPreferences(private val context: Context) {
     private fun loadLegacyMessages(file: File): List<ChatMessage> {
         if (!file.exists()) return emptyList()
         return runCatching {
-            val arr = JSONArray(file.readText())
-            (0 until arr.length()).map { i ->
-                val obj = arr.getJSONObject(i)
-                ChatMessage(
-                    id = obj.getString("id"),
-                    fromUser = obj.getBoolean("fromUser"),
-                    text = obj.getString("text"),
-                    createdAt = runCatching { Instant.parse(obj.getString("createdAt")) }
-                        .getOrDefault(Instant.now()),
-                    attachments = obj.optJSONArray("attachments")?.let { attachments ->
-                        (0 until attachments.length()).mapNotNull { index ->
-                            runCatching {
-                                attachments.getJSONObject(index).let { attachment ->
-                                    ChatAttachment(
-                                        id = attachment.optString("id").ifBlank { java.util.UUID.randomUUID().toString() },
-                                        displayName = attachment.getString("displayName"),
-                                        relativePath = attachment.getString("relativePath"),
-                                        mimeType = attachment.optString("mimeType", "application/octet-stream"),
-                                        sizeBytes = attachment.optLong("sizeBytes", 0L),
-                                    )
-                                }
-                            }.getOrNull()
-                        }
-                    }.orEmpty(),
-                    workedMillis = obj.optLong("workedMillis", 0L),
-                    workItems = obj.optJSONArray("workItems")?.let { workItems ->
-                        (0 until workItems.length()).mapNotNull { index ->
-                            runCatching {
-                                workItems.getJSONObject(index).let { item ->
-                                    com.jarves.mh.model.ActivityItem(
-                                        title = item.optString("title"),
-                                        detail = item.optString("detail"),
-                                        isComplete = item.optBoolean("isComplete", true),
-                                        isCommand = item.optBoolean("isCommand", false),
-                                    )
-                                }
-                            }.getOrNull()
-                        }
-                    }.orEmpty(),
-                )
-            }
+            appJson.decodeFromString<List<ChatMessage>>(file.readText())
         }.getOrDefault(emptyList())
     }
 

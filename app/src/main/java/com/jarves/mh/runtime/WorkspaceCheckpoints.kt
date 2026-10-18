@@ -10,7 +10,8 @@ import com.jarves.mh.ui.AppStrings
 import java.io.File
 import java.security.MessageDigest
 import java.util.concurrent.ConcurrentHashMap
-import org.json.JSONArray
+import com.jarves.mh.data.appJson
+import kotlinx.serialization.encodeToString
 
 /**
  * Workspace checkpoint / snapshot / diff store shared by agent bridges.
@@ -85,15 +86,14 @@ class WorkspaceCheckpoints(
             .filterNot(::isInternalRuntimePath)
             .distinct()
             .sorted()
-        manifest.writeText(JSONArray(merged).toString())
+        manifest.writeText(appJson.encodeToString(merged))
     }
 
     fun readChangedPaths(projectId: String): List<String> {
         val manifest = File(checkpointDir(projectId), "changes.json")
         if (!manifest.isFile) return emptyList()
         return runCatching {
-            val array = JSONArray(manifest.readText())
-            (0 until array.length()).map(array::getString)
+            appJson.decodeFromString<List<String>>(manifest.readText())
         }.getOrDefault(emptyList())
     }
 
@@ -102,7 +102,7 @@ class WorkspaceCheckpoints(
         if (remaining.isEmpty()) {
             checkpointDir(projectId).deleteRecursively()
         } else {
-            File(checkpointDir(projectId), "changes.json").writeText(JSONArray(remaining).toString())
+            File(checkpointDir(projectId), "changes.json").writeText(appJson.encodeToString(remaining))
         }
     }
 
