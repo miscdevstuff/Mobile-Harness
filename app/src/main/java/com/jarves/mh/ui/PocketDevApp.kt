@@ -2090,175 +2090,6 @@ private fun StartupLoadingScreen(
 }
 
 @Composable
-private fun WorkspaceLaunchExperience(state: AppUiState) {
-    val pulseTransition = rememberInfiniteTransition(label = "workspace launch")
-    val glow by pulseTransition.animateFloat(
-        initialValue = 0.18f,
-        targetValue = 0.48f,
-        animationSpec = infiniteRepeatable(
-            animation = keyframes { durationMillis = 1_400 },
-            repeatMode = RepeatMode.Reverse,
-        ),
-        label = "workspace glow",
-    )
-    val agentVersion = state.installedAgentVersions[state.agentKind]
-    val agentReady = state.startupMessage.contains("ready", ignoreCase = true) || state.startupProgress >= 0.75f
-
-    Text(
-        stringResource(R.string.workspace_launch_badge),
-        color = MaterialTheme.colorScheme.primary,
-        fontSize = 10.sp,
-        fontWeight = FontWeight.Bold,
-        letterSpacing = 1.35.sp,
-    )
-    Spacer(Modifier.height(10.dp))
-    Text(
-        stringResource(R.string.workspace_launch_title),
-        style = MaterialTheme.typography.headlineMedium,
-        fontWeight = FontWeight.Bold,
-    )
-    Spacer(Modifier.height(7.dp))
-    Text(
-        stringResource(R.string.workspace_launch_desc),
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-        fontSize = 13.sp,
-        lineHeight = 19.sp,
-    )
-    Spacer(Modifier.height(22.dp))
-
-    Surface(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(24.dp),
-        color = MaterialTheme.colorScheme.surface,
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.28f)),
-        tonalElevation = 3.dp,
-    ) {
-        Column(Modifier.padding(20.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(
-                    Modifier
-                        .size(58.dp)
-                        .background(MaterialTheme.colorScheme.primary.copy(alpha = glow), RoundedCornerShape(18.dp))
-                        .border(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.55f), RoundedCornerShape(18.dp)),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Icon(
-                        Icons.Default.AutoAwesome,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(27.dp),
-                    )
-                }
-                Spacer(Modifier.width(14.dp))
-                Column(Modifier.weight(1f)) {
-                    Text(
-                        state.agentKind.localizedTitle(),
-                        color = MaterialTheme.colorScheme.onSurface,
-                        fontSize = 16.sp,
-                        fontWeight = FontWeight.Bold,
-                    )
-                    Spacer(Modifier.height(3.dp))
-                    Text(
-                        agentVersion?.let { stringResource(R.string.ws_launch_verified_cli, it) } ?: stringResource(R.string.ws_launch_connecting_agent),
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        fontSize = 11.5.sp,
-                    )
-                }
-                Surface(
-                    color = PocketGreen.copy(alpha = 0.12f),
-                    shape = RoundedCornerShape(50),
-                    border = BorderStroke(1.dp, PocketGreen.copy(alpha = 0.3f)),
-                ) {
-                    Text(
-                        if (agentReady) stringResource(R.string.ws_launch_badge_ready) else stringResource(R.string.ws_launch_badge_starting),
-                        modifier = Modifier.padding(horizontal = 9.dp, vertical = 5.dp),
-                        color = PocketGreen,
-                        fontSize = 9.sp,
-                        fontWeight = FontWeight.Bold,
-                        letterSpacing = 0.7.sp,
-                    )
-                }
-            }
-
-            Spacer(Modifier.height(20.dp))
-            LinearProgressIndicator(
-                modifier = Modifier.fillMaxWidth().height(4.dp),
-                color = MaterialTheme.colorScheme.primary,
-                trackColor = MaterialTheme.colorScheme.surfaceVariant,
-            )
-            Spacer(Modifier.height(18.dp))
-            LaunchStatusRow(Icons.Default.Shield, stringResource(R.string.ws_launch_private_linux), stringResource(R.string.agent_status_verified), complete = true)
-            Spacer(Modifier.height(13.dp))
-            LaunchStatusRow(Icons.Default.Terminal, state.agentKind.localizedTitle(), if (agentReady) stringResource(R.string.runtime_setup_status_ready) else stringResource(R.string.ws_launch_connecting), complete = agentReady)
-            Spacer(Modifier.height(13.dp))
-            LaunchStatusRow(Icons.Default.Folder, stringResource(R.string.ws_launch_project_workspace), stringResource(R.string.ws_launch_restoring), complete = false)
-        }
-    }
-
-    Spacer(Modifier.height(16.dp))
-    Row(
-        Modifier
-            .fillMaxWidth()
-            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f), RoundedCornerShape(14.dp))
-            .padding(horizontal = 14.dp, vertical = 12.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        CircularProgressIndicator(
-            modifier = Modifier.size(17.dp),
-            strokeWidth = 2.dp,
-            color = MaterialTheme.colorScheme.primary,
-        )
-        Spacer(Modifier.width(11.dp))
-        Text(
-            state.startupMessage,
-            modifier = Modifier.weight(1f),
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            fontSize = 12.sp,
-            maxLines = 2,
-            overflow = TextOverflow.Ellipsis,
-        )
-    }
-    Spacer(Modifier.height(12.dp))
-    Text(
-        stringResource(R.string.workspace_launch_footer),
-        modifier = Modifier.fillMaxWidth(),
-        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f),
-        fontSize = 10.5.sp,
-        textAlign = TextAlign.Center,
-    )
-}
-
-@Composable
-private fun LaunchStatusRow(icon: ImageVector, label: String, status: String, complete: Boolean) {
-    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        Box(
-            Modifier
-                .size(28.dp)
-                .background(
-                    if (complete) PocketGreen.copy(alpha = 0.11f) else MaterialTheme.colorScheme.surfaceVariant,
-                    RoundedCornerShape(9.dp),
-                ),
-            contentAlignment = Alignment.Center,
-        ) {
-            Icon(
-                if (complete) Icons.Default.Check else icon,
-                contentDescription = null,
-                tint = if (complete) PocketGreen else MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.size(15.dp),
-            )
-        }
-        Spacer(Modifier.width(10.dp))
-        Text(label, modifier = Modifier.weight(1f), fontSize = 12.sp, fontWeight = FontWeight.Medium)
-        Text(
-            status,
-            color = if (complete) PocketGreen else MaterialTheme.colorScheme.primary,
-            fontSize = 11.sp,
-            fontWeight = FontWeight.SemiBold,
-        )
-    }
-}
-
-@Composable
 private fun SetupLogPanel(logs: List<String>) {
     var expanded by rememberSaveable { mutableStateOf(false) }
     var followLatest by rememberSaveable { mutableStateOf(true) }
@@ -2512,9 +2343,6 @@ private fun RootScreenHost(
                     onCloneGitHub = viewModel::cloneGitHubRepository,
                     onRenameProject = viewModel::renameProject,
                     onDeleteProject = viewModel::deleteProject,
-                    onSettings = { screen = RootScreen.SETTINGS },
-                    onPing = viewModel::pingApi,
-                    onToggleTheme = viewModel::toggleTheme,
                     onInstallUpdate = viewModel::installAppUpdate,
                 )
                 RootScreen.AGENT -> AgentScreen(
@@ -2543,31 +2371,11 @@ private fun RootScreenHost(
                 )
                 RootScreen.SETTINGS -> SettingsScreen(
                     state = state,
-                    onSaveProvider = { profile, key ->
-                        viewModel.updateProvider(profile, key)
-                    },
-                    onDiscoverModels = viewModel::discoverModels,
-                    onValidateProvider = viewModel::validateProvider,
                     onSetThemeMode = viewModel::setThemeMode,
                     onSetLanguage = viewModel::setLanguage,
-                    onPing = viewModel::pingApi,
                     onClearTerminal = viewModel::clearTerminal,
-                    getSavedApiKey = viewModel::getSavedApiKey,
-                    getSavedApiKeys = viewModel::getSavedApiKeys,
-                    onAddApiKey = viewModel::addApiKey,
-                    onActivateApiKey = viewModel::activateApiKey,
-                    onRemoveApiKey = viewModel::removeApiKey,
                     onInstallDevStack = viewModel::installDevStack,
                     onRemoveDevStack = viewModel::removeDevStack,
-                    onInstallAgent = viewModel::installAgent,
-                    onCheckAgentUpdates = viewModel::checkAgentUpdates,
-                    onUpdateAgent = viewModel::updateAgent,
-                    onStartAntigravityLogin = viewModel::startAntigravityLogin,
-                    onSubmitAntigravityCode = viewModel::submitAntigravityCode,
-                    onLogoutAntigravity = viewModel::logoutAntigravity,
-                    onRefreshAntigravityModels = viewModel::refreshAntigravityModels,
-                    onSetAntigravityModel = viewModel::setAntigravityModel,
-                    onSetAntigravityEffort = viewModel::setAntigravityEffort,
                     initialDebugUpdateManifestUrl = viewModel.debugUpdateManifestUrl(),
                     onSetDebugUpdateManifestUrl = viewModel::setDebugUpdateManifestUrl,
                     onClearDebugUpdateManifestUrl = viewModel::clearDebugUpdateManifestUrl,
@@ -2762,7 +2570,6 @@ private fun ProviderSetupScreen(
             if (onboarding) StepDots(step)
             Spacer(Modifier.height(16.dp))
             when (step) {
-                0 -> DeviceCheckStep(context, onContinue = { step = 1 })
                 1 -> ProviderChoiceStep(
                     selected = selected,
                     agentKind = agentKind,
@@ -2860,49 +2667,6 @@ private fun StepDots(step: Int) {
                     .background(if (index <= step) PocketOrange else MaterialTheme.colorScheme.outlineVariant, CircleShape),
             )
         }
-    }
-}
-
-@Composable
-private fun DeviceCheckStep(context: Context, onContinue: () -> Unit) {
-    val activityManager = context.getSystemService(ActivityManager::class.java)
-    val memoryInfo = remember { ActivityManager.MemoryInfo().also(activityManager::getMemoryInfo) }
-    val totalRamGb = memoryInfo.totalMem.toDouble() / 1_073_741_824.0
-    val totalRamLabel = String.format(java.util.Locale.US, "%.1f", totalRamGb)
-    val arm64 = supportsArm64Runtime(Build.SUPPORTED_ABIS, System.getProperty("os.arch"))
-    val compatible = arm64
-    Column(verticalArrangement = Arrangement.spacedBy(18.dp)) {
-        BrandMark()
-        Text(stringResource(R.string.provider_device_title), style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
-        Text(stringResource(R.string.provider_device_desc), color = MaterialTheme.colorScheme.onSurfaceVariant)
-        CheckRow(Icons.Default.Memory, stringResource(R.string.provider_memory), stringResource(R.string.provider_memory_mode, totalRamLabel, stringResource(if (totalRamGb >= 7.5) R.string.provider_full_mode else R.string.provider_lite_mode)), true)
-        CheckRow(Icons.Default.Code, stringResource(R.string.runtime_setup_processor), Build.SUPPORTED_ABIS.firstOrNull() ?: stringResource(R.string.provider_unknown), arm64)
-        CheckRow(Icons.Default.Storage, "Android", stringResource(R.string.provider_android_version, Build.VERSION.RELEASE), true)
-        Surface(color = MaterialTheme.colorScheme.surfaceVariant, shape = RoundedCornerShape(16.dp)) {
-            Text(
-                stringResource(R.string.provider_security_warning),
-                modifier = Modifier.padding(16.dp),
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-        Button(onClick = onContinue, enabled = compatible, modifier = Modifier.fillMaxWidth().height(52.dp)) {
-            Text(stringResource(if (compatible) R.string.provider_continue else R.string.runtime_setup_device_not_supported))
-        }
-    }
-}
-
-@Composable
-private fun CheckRow(icon: ImageVector, title: String, value: String, passed: Boolean) {
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Surface(shape = RoundedCornerShape(12.dp), color = MaterialTheme.colorScheme.surfaceVariant) {
-            Icon(icon, null, Modifier.padding(11.dp).size(22.dp), tint = if (passed) PocketGreen else MaterialTheme.colorScheme.error)
-        }
-        Spacer(Modifier.width(12.dp))
-        Column(Modifier.weight(1f)) {
-            Text(title, fontWeight = FontWeight.SemiBold)
-            Text(value, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp)
-        }
-        Icon(if (passed) Icons.Default.Check else Icons.Default.Warning, null, tint = if (passed) PocketGreen else MaterialTheme.colorScheme.error)
     }
 }
 
@@ -3006,31 +2770,6 @@ private fun ProviderChoiceStep(
     }
 }
 
-@StringRes
-private fun providerTitleResource(provider: ProviderKind): Int = when (provider) {
-    ProviderKind.CLAUDE -> R.string.provider_title_claude
-    ProviderKind.ANTHROPIC -> R.string.provider_title_anthropic
-    ProviderKind.LLM_ROUTER -> R.string.provider_title_openrouter
-    ProviderKind.DEEPSEEK -> R.string.provider_title_deepseek
-    ProviderKind.KIMI -> R.string.provider_title_kimi
-    ProviderKind.OPENCODE_CLI -> R.string.provider_title_opencode_cli
-    ProviderKind.OPENCODE_ZEN -> R.string.provider_title_opencode
-    ProviderKind.NVIDIA_NIM -> R.string.provider_title_nvidia
-    ProviderKind.CUSTOM -> R.string.provider_title_custom
-}
-
-@StringRes
-private fun providerSubtitleResource(provider: ProviderKind): Int = when (provider) {
-    ProviderKind.CLAUDE -> R.string.provider_subtitle_claude
-    ProviderKind.ANTHROPIC -> R.string.provider_subtitle_anthropic
-    ProviderKind.LLM_ROUTER -> R.string.provider_subtitle_openrouter
-    ProviderKind.DEEPSEEK -> R.string.provider_subtitle_deepseek
-    ProviderKind.KIMI, ProviderKind.CUSTOM -> R.string.provider_subtitle_anthropic_compatible
-    ProviderKind.OPENCODE_CLI -> R.string.provider_subtitle_opencode_cli
-    ProviderKind.OPENCODE_ZEN -> R.string.provider_subtitle_opencode
-    ProviderKind.NVIDIA_NIM -> R.string.provider_subtitle_nvidia
-}
-
 @Composable
 private fun ProviderChoiceRow(
     provider: ProviderKind,
@@ -3081,7 +2820,7 @@ private fun ProviderChoiceRow(
         Column(Modifier.weight(1f)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    stringResource(providerTitleResource(provider)),
+                    stringResource(provider.titleRes()),
                     fontWeight = FontWeight.SemiBold,
                     fontSize = 13.sp,
                     color = MaterialTheme.colorScheme.onSurface,
@@ -3104,7 +2843,7 @@ private fun ProviderChoiceRow(
             }
             Spacer(Modifier.height(1.dp))
             Text(
-                stringResource(providerSubtitleResource(provider)),
+                stringResource(provider.subtitleRes()),
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 fontSize = 10.5.sp,
                 maxLines = 1,
@@ -3304,7 +3043,7 @@ private fun ProviderCredentialsStep(
                 }
             }
             Spacer(Modifier.height(16.dp))
-            Text(stringResource(providerTitleResource(provider)), style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold)
+            Text(stringResource(provider.titleRes()), style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold)
             Spacer(Modifier.height(5.dp))
             Text(
                 when {
@@ -3329,7 +3068,7 @@ private fun ProviderCredentialsStep(
                         { onBaseUrl(it); status = null; statusDetails = null; models = emptyList() },
                         label = { Text(stringResource(R.string.provider_base_url)) },
                         supportingText = {
-                            if (provider.fixedBaseUrl) Text(stringResource(R.string.provider_fixed_by, stringResource(providerTitleResource(provider))))
+                            if (provider.fixedBaseUrl) Text(stringResource(R.string.provider_fixed_by, stringResource(provider.titleRes())))
                         },
                         readOnly = provider.fixedBaseUrl,
                         enabled = !provider.fixedBaseUrl,
@@ -3559,9 +3298,6 @@ private fun ProjectsScreen(
     onCloneGitHub: (GitHubRepository) -> Unit,
     onRenameProject: (String, String) -> Unit,
     onDeleteProject: (String) -> Unit,
-    onSettings: () -> Unit,
-    onPing: () -> Unit,
-    onToggleTheme: () -> Unit,
     onInstallUpdate: () -> Unit,
 ) {
     var showCreate by rememberSaveable { mutableStateOf(false) }
@@ -4099,72 +3835,6 @@ private fun ImportSourceButton(
         else Icon(icon, null, Modifier.size(17.dp))
         Spacer(Modifier.width(7.dp))
         Text(title, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
-    }
-}
-
-@Composable
-private fun ApiStatusChip(state: AppUiState, onSettings: () -> Unit, onPing: () -> Unit) {
-    val dotColor = when (state.apiPingStatus) {
-        ApiPingStatus.OK -> PocketGreen
-        ApiPingStatus.FAILED -> MaterialTheme.colorScheme.error
-        ApiPingStatus.PINGING -> PocketOrange
-        ApiPingStatus.IDLE -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)
-    }
-    val agentTitle = state.agentKind.localizedTitle()
-    val providerTitle = state.provider.kind.localizedTitle()
-    val providerLabel = when {
-        state.agentKind == AgentKind.ANTIGRAVITY ->
-            state.antigravityModel.ifBlank { agentTitle }
-        state.provider.model.isNotBlank() -> state.provider.model
-        state.provider.baseUrl.isNotBlank() -> {
-            runCatching { java.net.URI(state.provider.baseUrl).host ?: providerTitle }
-                .getOrDefault(providerTitle)
-        }
-        else -> providerTitle
-    }
-
-    Surface(
-        shape = RoundedCornerShape(50),
-        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
-        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)),
-    ) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.clickable(onClick = onSettings).padding(start = 12.dp, end = 4.dp, top = 6.dp, bottom = 6.dp),
-        ) {
-            // Status dot
-            Box(
-                modifier = Modifier
-                    .size(8.dp)
-                    .background(dotColor, CircleShape),
-            )
-            Spacer(Modifier.width(8.dp))
-            // Model / provider name
-            Text(
-                text = providerLabel,
-                fontSize = 13.sp,
-                fontWeight = FontWeight.Medium,
-                color = MaterialTheme.colorScheme.onSurface,
-                maxLines = 1,
-            )
-            Spacer(Modifier.width(4.dp))
-            // Ping button
-            IconButton(
-                onClick = onPing,
-                modifier = Modifier.size(28.dp),
-            ) {
-                if (state.apiPingStatus == ApiPingStatus.PINGING) {
-                    CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp, color = PocketOrange)
-                } else {
-                    Icon(
-                        Icons.Default.Refresh,
-                        contentDescription = stringResource(R.string.ws_ping_api),
-                        modifier = Modifier.size(16.dp),
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-            }
-        }
     }
 }
 
@@ -6899,22 +6569,6 @@ private fun activityName(item: ActivityItem): String = item.title
     .replaceFirstChar { it.uppercase() }
 
 @Composable
-private fun completedProcessSummary(
-    processItems: List<ActivityItem>,
-    startedAtMillis: Long?,
-    finishedAtMillis: Long?,
-): String {
-    val stopped = processItems.lastOrNull()?.title?.startsWith("Task stopped") == true
-    val outcome = if (stopped) stringResource(R.string.ws_task_stopped) else stringResource(R.string.ws_task_completed)
-    val steps = if (processItems.size == 1) stringResource(R.string.ws_steps_one) else stringResource(R.string.ws_steps_many, processItems.size)
-    val duration = startedAtMillis?.let { start ->
-        val end = finishedAtMillis ?: System.currentTimeMillis()
-        formatDuration(((end - start) / 1000L).coerceAtLeast(0))
-    }
-    return if (duration != null) "$outcome · $duration · $steps" else "$outcome · $steps"
-}
-
-@Composable
 private fun rememberLiveElapsedSeconds(startedAtMillis: Long): Int {
     var seconds by remember(startedAtMillis) {
         mutableIntStateOf(((System.currentTimeMillis() - startedAtMillis) / 1000L).toInt().coerceAtLeast(0))
@@ -7035,43 +6689,6 @@ private fun ApprovalCard(request: ToolRequest, onApproval: (Boolean) -> Unit) {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedButton(onClick = { onApproval(false) }, Modifier.weight(1f)) { Text(stringResource(R.string.ws_reject)) }
                 Button(onClick = { onApproval(true) }, Modifier.weight(1f)) { Text(stringResource(R.string.ws_allow_once)) }
-            }
-        }
-    }
-}
-
-@Composable
-private fun FilesTab(files: List<WorkspaceEntry>, loading: Boolean, onRefresh: () -> Unit) {
-    LazyColumn(contentPadding = PaddingValues(18.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        item {
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Text(stringResource(R.string.ws_project_files), Modifier.weight(1f), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                if (loading) {
-                    CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp)
-                } else {
-                    IconButton(onClick = onRefresh) { Icon(Icons.Default.Refresh, stringResource(R.string.ws_refresh_files)) }
-                }
-            }
-            Spacer(Modifier.height(8.dp))
-        }
-        if (!loading && files.isEmpty()) {
-            item { EmptyState(Icons.Default.Folder, stringResource(R.string.workspace_no_files), stringResource(R.string.workspace_no_files_description)) }
-        }
-        items(files, key = { it.path }) { entry ->
-            Row(
-                Modifier.fillMaxWidth().padding(start = (entry.depth * 20).dp).padding(vertical = 10.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Icon(
-                    if (entry.isDirectory) Icons.Default.Folder else Icons.Default.Description,
-                    null,
-                    tint = if (entry.isDirectory) PocketOrange else MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                Spacer(Modifier.width(11.dp))
-                Text(entry.name, Modifier.weight(1f))
-                if (!entry.isDirectory) {
-                    Text(formatFileSize(entry.sizeBytes), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
             }
         }
     }

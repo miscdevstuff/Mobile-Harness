@@ -176,31 +176,16 @@ private suspend fun stopAfterTerminalResult(process: Process) {
 }
 
 class AntigravityRuntimeBridge(
-    private val context: Context,
+    context: Context,
     private val model: () -> String,
     private val effort: () -> String,
     private val conversationId: (String) -> String?,
     private val saveConversationId: (String, String) -> Unit,
-) : RuntimeBridge {
-    private val installer = RuntimeInstaller(context)
-    private val checkpoints = WorkspaceCheckpoints(context.filesDir, context)
-    private val eventBus = MutableSharedFlow<RuntimeEvent>(extraBufferCapacity = 64)
-    override val events: Flow<RuntimeEvent> = eventBus
-    private val finished = ConcurrentHashMap.newKeySet<String>()
-    @Volatile private var activeProcess: Process? = null
-    @Volatile private var activeSessionId: String? = null
-    @Volatile private var userStopRequested = false
-    @Volatile private var foregroundResultPosted = false
-    @Volatile private var activeProjectSlug = ""
-    @Volatile private var taskStartedAtElapsedRealtime = 0L
-    @Volatile private var lastForegroundProgressAt = 0L
-
-    fun configureProjectRoot(projectId: String, rootPath: String) = checkpoints.configureProjectRoot(projectId, rootPath)
+) : BaseRuntimeBridge(context, "Antigravity", progressIntervalMs = FOREGROUND_PROGRESS_MIN_INTERVAL_MS) {
 
     /**
      * Lightweight connectivity probe: sends a tiny hello to agy and returns its
      * reply text. No foreground service, no checkpoints, no saved conversation.
-     * The timeout is intentionally internal — callers only see success/failure.
      */
     suspend fun hello(timeoutMillis: Long = HELLO_TIMEOUT_MILLIS): String = withContext(Dispatchers.IO) {
         if (!installer.isAgentInstalled(com.jarves.mh.model.AgentKind.ANTIGRAVITY)) {
@@ -210,7 +195,7 @@ class AntigravityRuntimeBridge(
         try {
             withTimeout(timeoutMillis) {
                 val installed = installer.installedRuntime()
-                val probeDir = File(context.cacheDir, "agy-hello").apply { mkdirs() }
+                val probeDir = File(context.cacheDir, "agy-hello-${System.nanoTime()}").apply { mkdirs() }
                 val command = buildList {
                     add(RuntimeInstaller.AGY_GUEST_PATH)
                     addAll(listOf("--input-format", "stream-json"))
@@ -288,9 +273,7 @@ class AntigravityRuntimeBridge(
                     reply?.trim().takeUnless { it.isNullOrEmpty() } ?: "ok"
                 } finally {
                     runCatching { process.destroy() }
-                    runCatching {
-                        if (process.isAlive) process.destroyForcibly()
-                    }
+                    runCatching { if (process.isAlive) process.destroyForcibly() }
                     runCatching { outputFile.delete() }
                     runCatching { probeDir.deleteRecursively() }
                 }
@@ -320,26 +303,17 @@ class AntigravityRuntimeBridge(
     ): String = withContext(Dispatchers.IO + NonCancellable) {
         val sessionId = UUID.randomUUID().toString()
         val sessionStartedAtMillis = System.currentTimeMillis()
-        activeSessionId = sessionId
-        userStopRequested = false
-        foregroundResultPosted = false
-        activeProjectSlug = projectSlug
-        taskStartedAtElapsedRealtime = android.os.SystemClock.elapsedRealtime()
-        lastForegroundProgressAt = 0L
-        finished.remove(sessionId)
+        beginSessionState(sessionId, projectSlug)
         eventBus.emit(RuntimeEvent.SessionStarted(sessionId))
         if (!installer.isAgentInstalled(com.jarves.mh.model.AgentKind.ANTIGRAVITY)) {
-            emitFailure(sessionId, "Antigravity CLI is not installed. Open Settings → Coding agent to install it.")
+            emitFailureOnce(sessionId, "Antigravity CLI is not installed. Open Settings → Coding agent to install it.")
             return@withContext sessionId
         }
 
         runCatching {
-            RuntimeTaskController.stopAction = {
-                userStopRequested = true
-                activeProcess?.destroy()
-            }
+            installDefaultStopAction()
             startForegroundRuntime(projectSlug)
-            pushForegroundProgress(R.string.rt_bridge_starting, "Antigravity")
+            pushForegroundProgress(R.string.rt_bridge_starting, agentDisplayName)
             val installed = installer.installedRuntime()
             val workspace = checkpoints.ensureWorkspace(projectId)
             checkpoints.createCheckpoint(projectId, workspace)
@@ -378,7 +352,7 @@ class AntigravityRuntimeBridge(
                     is AntigravityParsedEvent.Initialized -> saveConversationId(projectId, event.conversationId)
                     is AntigravityParsedEvent.Text -> {
                         assistantTextSeen = true
-                        pushForegroundProgress(R.string.rt_bridge_working, "Antigravity")
+                        pushForegroundProgress(R.string.rt_bridge_working, agentDisplayName)
                         eventBus.emit(RuntimeEvent.AssistantDelta(sessionId, event.value))
                     }
                     is AntigravityParsedEvent.ToolStarted -> {
@@ -386,14 +360,12 @@ class AntigravityRuntimeBridge(
                         activeToolDetail = event.detail
                         activeToolStartedAtMillis = System.currentTimeMillis()
                         lastToolProgressAtMillis = activeToolStartedAtMillis
-                        pushForegroundProgress(
-                            AppStrings.get(context, R.string.rt_bridge_running_tool, event.name, event.detail),
-                        )
+                        pushForegroundProgress(R.string.rt_bridge_running_tool, event.name, event.detail)
                         eventBus.emit(RuntimeEvent.ToolStarted(sessionId, event.name, event.detail))
                     }
                     is AntigravityParsedEvent.ToolCompleted -> {
                         if (activeToolName == event.name) activeToolName = null
-                        pushForegroundProgress(R.string.rt_bridge_working, "Antigravity")
+                        pushForegroundProgress(R.string.rt_bridge_working, agentDisplayName)
                         eventBus.emit(RuntimeEvent.ToolCompleted(sessionId, event.name, event.detail))
                     }
                     is AntigravityParsedEvent.Result -> {
@@ -416,7 +388,7 @@ class AntigravityRuntimeBridge(
                     pushForegroundProgress(
                         activeToolName?.let { name ->
                             AppStrings.get(context, R.string.rt_bridge_running_tool, name, activeToolDetail)
-                        } ?: AppStrings.get(context, R.string.rt_bridge_working, "Antigravity"),
+                        } ?: AppStrings.get(context, R.string.rt_bridge_working, agentDisplayName),
                     )
                     if (activeToolName == "Bash" && activeToolDetail.contains("gradle", ignoreCase = true) &&
                         now - activeToolStartedAtMillis >= 10_000L && now - lastToolProgressAtMillis >= 10_000L
@@ -459,13 +431,11 @@ class AntigravityRuntimeBridge(
                     friendlyError(pending.toString().takeLast(1_000).ifBlank { "Antigravity exited with code $exit" })
                 }
             }
-            val paths = checkpoints.changedFiles(workspace, before)
-            checkpoints.saveChangedPaths(projectId, paths)
-            if (paths.isNotEmpty()) {
-                eventBus.emit(RuntimeEvent.FilesChanged(sessionId, checkpoints.buildChangeDetails(projectId, workspace, paths)))
-            }
-            emitCompleted(sessionId)
-            finishForegroundRuntime(true, projectSlug, AppStrings.get(context, R.string.rt_bridge_finished_in, "Antigravity", projectSlug))
+            recordWorkspaceChanges(sessionId, projectId, workspace, before)
+            emitCompletedOnce(
+                sessionId,
+                AppStrings.get(context, R.string.rt_bridge_finished_in, agentDisplayName, projectSlug),
+            )
         }.onFailure {
             val diagnostic = recentAntigravityDiagnostic(sessionStartedAtMillis)
             val message = if (userStopRequested) {
@@ -473,148 +443,10 @@ class AntigravityRuntimeBridge(
             } else {
                 antigravityFriendlyError(it.message.orEmpty(), diagnostic)
             }
-            emitFailure(sessionId, message)
-            if (userStopRequested) cancelForegroundRuntime()
-            else finishForegroundRuntime(false, projectSlug, message)
+            emitFailureOnce(sessionId, message)
         }
-        activeProcess = null
-        activeSessionId = null
-        activeProjectSlug = ""
-        taskStartedAtElapsedRealtime = 0L
-        RuntimeTaskController.stopAction = null
+        clearSessionState()
         sessionId
-    }
-
-    override suspend fun respondToApproval(request: ToolRequest, approved: Boolean) {
-        // agy headless streaming rejects control_response messages. This driver is
-        // intentionally launched with --dangerously-skip-permissions by explicit
-        // product choice, so no Antigravity approval can be pending here.
-    }
-
-    override suspend fun stopSession(sessionId: String) {
-        if (activeSessionId == sessionId) {
-            userStopRequested = true
-            activeProcess?.destroy()
-            emitFailure(sessionId, "Stopped by user")
-        }
-    }
-
-    override suspend fun stopActiveSession() = activeSessionId?.let { stopSession(it) } ?: Unit
-
-    override suspend fun undoLastChanges(projectId: String): Boolean = withContext(Dispatchers.IO) {
-        val checkpoint = checkpoints.checkpointDir(projectId)
-        val backup = File(checkpoint, "project")
-        val paths = checkpoints.readChangedPaths(projectId)
-        if (!backup.isDirectory || paths.isEmpty()) return@withContext false
-        val workspace = checkpoints.ensureWorkspace(projectId)
-        paths.forEach { restore(workspace, backup, it) }
-        checkpoint.deleteRecursively()
-        true
-    }
-
-    override suspend fun acceptLastChanges(projectId: String): Unit = withContext(Dispatchers.IO) {
-        checkpoints.checkpointDir(projectId).deleteRecursively()
-        Unit
-    }
-
-    override suspend fun loadPendingChanges(projectId: String): List<ChangeItem> = withContext(Dispatchers.IO) {
-        val paths = checkpoints.readChangedPaths(projectId)
-        if (paths.isEmpty()) emptyList() else checkpoints.buildChangeDetails(projectId, checkpoints.ensureWorkspace(projectId), paths)
-    }
-
-    override suspend fun undoFileChange(projectId: String, path: String): Boolean = withContext(Dispatchers.IO) {
-        if (path !in checkpoints.readChangedPaths(projectId)) return@withContext false
-        restore(checkpoints.ensureWorkspace(projectId), File(checkpoints.checkpointDir(projectId), "project"), path)
-        checkpoints.removeChangedPath(projectId, path)
-        true
-    }
-
-    override suspend fun acceptFileChange(projectId: String, path: String): Boolean = withContext(Dispatchers.IO) {
-        if (path !in checkpoints.readChangedPaths(projectId)) return@withContext false
-        val workspace = checkpoints.ensureWorkspace(projectId)
-        val backup = File(checkpoints.checkpointDir(projectId), "project")
-        val current = checkpoints.safeWorkspaceFile(workspace, path)
-        val baseline = checkpoints.safeWorkspaceFile(backup, path)
-        if (current.isFile) {
-            baseline.parentFile?.mkdirs()
-            current.copyTo(baseline, overwrite = true)
-        } else baseline.delete()
-        checkpoints.removeChangedPath(projectId, path)
-        true
-    }
-
-    private fun restore(workspace: File, backup: File, path: String) {
-        val target = checkpoints.safeWorkspaceFile(workspace, path)
-        val original = checkpoints.safeWorkspaceFile(backup, path)
-        if (original.isFile) {
-            target.parentFile?.mkdirs()
-            original.copyTo(target, overwrite = true)
-        } else target.delete()
-    }
-
-    private suspend fun emitCompleted(sessionId: String) {
-        if (finished.add(sessionId)) eventBus.emit(RuntimeEvent.SessionCompleted(sessionId))
-    }
-
-    private suspend fun emitFailure(sessionId: String, reason: String) {
-        if (finished.add(sessionId)) eventBus.emit(RuntimeEvent.SessionFailed(sessionId, reason))
-    }
-
-    private fun startForegroundRuntime(projectName: String) {
-        ContextCompat.startForegroundService(
-            context,
-            android.content.Intent(context, RuntimeExecutionService::class.java)
-                .setAction(RuntimeExecutionService.ACTION_START)
-                .putExtra(RuntimeExecutionService.EXTRA_PROJECT_NAME, projectName),
-        )
-    }
-
-    /** Keeps long, silent Antigravity turns visibly active in Android's foreground service. */
-    private fun pushForegroundProgress(@androidx.annotation.StringRes id: Int, vararg args: Any) {
-        pushForegroundProgress(AppStrings.get(context, id, *args))
-    }
-
-    private fun pushForegroundProgress(detailRaw: String) {
-        if (activeSessionId == null) return
-        val now = android.os.SystemClock.elapsedRealtime()
-        if (now - lastForegroundProgressAt < FOREGROUND_PROGRESS_MIN_INTERVAL_MS) return
-        lastForegroundProgressAt = now
-        val detail = detailRaw.replace(Regex("\\s+"), " ").trim().take(110)
-        val elapsed = (now - taskStartedAtElapsedRealtime).coerceAtLeast(0L) / 1_000L
-        val minutes = elapsed / 60L
-        val seconds = elapsed % 60L
-        runCatching {
-            context.startService(
-                android.content.Intent(context, RuntimeExecutionService::class.java)
-                    .setAction(RuntimeExecutionService.ACTION_PROGRESS)
-                    .putExtra(RuntimeExecutionService.EXTRA_PROJECT_NAME, activeProjectSlug)
-                    .putExtra(RuntimeExecutionService.EXTRA_DETAIL, "$detail · $minutes:${seconds.toString().padStart(2, '0')}"),
-            )
-        }
-    }
-
-    private fun finishForegroundRuntime(completed: Boolean, projectName: String, detail: String) {
-        if (foregroundResultPosted) return
-        foregroundResultPosted = true
-        runCatching {
-            context.startService(
-                android.content.Intent(context, RuntimeExecutionService::class.java)
-                    .setAction(if (completed) RuntimeExecutionService.ACTION_COMPLETE else RuntimeExecutionService.ACTION_FAILED)
-                    .putExtra(RuntimeExecutionService.EXTRA_PROJECT_NAME, projectName)
-                    .putExtra(RuntimeExecutionService.EXTRA_DETAIL, detail),
-            )
-        }.onFailure { context.stopService(android.content.Intent(context, RuntimeExecutionService::class.java)) }
-    }
-
-    private fun cancelForegroundRuntime() {
-        if (foregroundResultPosted) return
-        foregroundResultPosted = true
-        runCatching {
-            context.startService(
-                android.content.Intent(context, RuntimeExecutionService::class.java)
-                    .setAction(RuntimeExecutionService.ACTION_CANCELLED),
-            )
-        }.onFailure { context.stopService(android.content.Intent(context, RuntimeExecutionService::class.java)) }
     }
 
     private fun friendlyError(raw: String): String = antigravityFriendlyError(raw)

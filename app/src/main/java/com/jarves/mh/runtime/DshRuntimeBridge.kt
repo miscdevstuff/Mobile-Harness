@@ -1,76 +1,45 @@
 package com.jarves.mh.runtime
 
 import android.content.Context
+import android.os.SystemClock
 import android.util.Log
-import androidx.core.content.ContextCompat
 import com.jarves.mh.R
-import com.jarves.mh.ui.AppStrings
-import com.jarves.mh.model.ChangeItem
+import com.jarves.mh.model.AgentKind
 import com.jarves.mh.model.ChatMessage
-import com.jarves.mh.model.DevStack
 import com.jarves.mh.model.ProjectKind
 import com.jarves.mh.model.ProviderKind
 import com.jarves.mh.model.ProviderProfile
 import com.jarves.mh.model.RuntimeEvent
-import com.jarves.mh.model.ToolRequest
+import com.jarves.mh.ui.AppStrings
 import java.io.File
 import java.io.RandomAccessFile
 import java.util.UUID
-import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
 
-/**
- * [RuntimeBridge] driving the official DeepSeek Harness (`dsh`) in headless
- * one-shot mode: `dsh --profile headless "<task>"`.
- *
- * Verified contract (dsh 0.1.2-rc.1): the final answer goes to stdout, provider
- * reasoning deltas stream under a `dsh: reasoning:` heading, failures print
- * `dsh: <CODE>: <message>`, exit 0 means the turn completed. Because the
- * native launcher merges stdout+stderr into one capture file, this bridge
- * separates the streams by the `dsh:` diagnostic prefix.
- *
- * Auth and model selection are fully non-interactive: keys travel in the
- * process environment (`DEEPSEEK_API_KEY` for the native route, one shared
- * `MH_DSH_API_KEY` for hand-declared routes) and `$DSH_HOME/settings.yaml`
- * carries the default model plus any custom provider route.
- */
 class DshRuntimeBridge(
-    private val context: Context,
+    context: Context,
     private val secretFor: (ProviderProfile) -> String?,
-) : RuntimeBridge {
-    private val installer = RuntimeInstaller(context)
-    private val checkpoints = WorkspaceCheckpoints(context.filesDir, context)
-    private val eventBus = MutableSharedFlow<RuntimeEvent>(extraBufferCapacity = 64)
-    override val events: Flow<RuntimeEvent> = eventBus
-    private val finishedSessions = ConcurrentHashMap.newKeySet<String>()
-    @Volatile private var activeProcess: Process? = null
-    @Volatile private var activeSessionId: String? = null
-    @Volatile private var userStopRequested: Boolean = false
-    @Volatile private var activeProjectSlug: String? = null
-    @Volatile private var taskStartedAtElapsedRealtime: Long = 0L
-    @Volatile private var lastForegroundProgressAt: Long = 0L
-    @Volatile private var foregroundResultPosted: Boolean = false
+) : BaseRuntimeBridge(context, "DeepSeek Harness") {
     @Volatile private var lastThinkingUpdateAt: Long = 0L
 
-    override suspend fun startSession(projectId: String, projectSlug: String, projectKind: ProjectKind, prompt: String, conversationHistory: List<ChatMessage>, provider: ProviderProfile): String = withContext(Dispatchers.IO + NonCancellable) {
+    override suspend fun startSession(
+        projectId: String,
+        projectSlug: String,
+        projectKind: ProjectKind,
+        prompt: String,
+        conversationHistory: List<ChatMessage>,
+        provider: ProviderProfile,
+    ): String = withContext(Dispatchers.IO + NonCancellable) {
         val sessionId = UUID.randomUUID().toString()
-        finishedSessions.remove(sessionId)
-        activeSessionId = sessionId
-        userStopRequested = false
-        activeProjectSlug = projectSlug
-        taskStartedAtElapsedRealtime = android.os.SystemClock.elapsedRealtime()
-        lastForegroundProgressAt = 0L
-        foregroundResultPosted = false
+        beginSessionState(sessionId, projectSlug)
         lastThinkingUpdateAt = 0L
         eventBus.emit(RuntimeEvent.SessionStarted(sessionId))
-        pushForegroundProgress(R.string.rt_bridge_starting, "DeepSeek Harness")
+        pushForegroundProgress(R.string.rt_bridge_starting, agentDisplayName)
         val secret = secretFor(provider).orEmpty().ifBlank { localServerPlaceholderKey(provider) }
         if (secret.isBlank()) {
             eventBus.emit(RuntimeEvent.SessionFailed(sessionId, "No API key is saved for ${provider.kind.title}."))
@@ -88,20 +57,10 @@ class DshRuntimeBridge(
 
         var openRouterGateway: OpenRouterRoutingGateway? = null
         runCatching {
-            RuntimeTaskController.stopAction = {
-                userStopRequested = true
-                val running = activeProcess
-                if (running != null) {
-                    Thread {
-                        running.destroy()
-                        Thread.sleep(500)
-                        if (running.isAlive) running.destroyForcibly()
-                    }.start()
-                }
-            }
+            installDefaultStopAction()
             startForegroundRuntime(projectSlug)
             val installed = installer.installedRuntime()
-            check(installer.isAgentInstalled(com.jarves.mh.model.AgentKind.DEEPSEEK_HARNESS)) {
+            check(installer.isAgentInstalled(AgentKind.DEEPSEEK_HARNESS)) {
                 "DeepSeek Harness is not installed. Open Settings → Coding agent to install it."
             }
             installer.ensureDshAndroidCompatibility()
@@ -120,8 +79,6 @@ class DshRuntimeBridge(
             writeDshSettings(installed.rootfs, route, provider)
             val environment = linkedMapOf(
                 "DSH_HOME" to DSH_HOME_GUEST_PATH,
-                // PocketDev already confines the whole Linux guest with PRoot. Let dsh
-                // use every tool inside that boundary without an unavailable approval UI.
                 "DSH_PERMISSION_MODE" to "danger-full-access",
                 route.keyEnv to secret,
             )
@@ -130,7 +87,6 @@ class DshRuntimeBridge(
             val guestWorkspacePath = "/workspace/$projectSlug"
             val contextPrompt = buildContextPrompt(prompt, conversationHistory, guestWorkspacePath, projectKind)
             val command = listOf("/usr/local/bin/dsh", "--profile", "sdk")
-            Log.d("DshBridge", "Route: ${route.name}, Model: ${provider.model}")
             val process = installer.process(
                 installed.proot,
                 installed.rootfs,
@@ -138,9 +94,6 @@ class DshRuntimeBridge(
                 environment,
                 command,
                 guestWorkspacePath = guestWorkspacePath,
-                // dsh's editor saves through an atomic temp-file rename. PRoot's
-                // hard-link emulation turns that rename into a dangling `.l2s`
-                // symlink after the temp file is removed, losing the real file.
                 emulateHardLinks = false,
             )
             activeProcess = process
@@ -154,25 +107,11 @@ class DshRuntimeBridge(
                 prompt = contextPrompt,
             )
             val exit = process.waitFor()
-            Log.d("DshBridge", "SDK process exited with code $exit")
-            val changed = checkpoints.changedFiles(workspace, before)
-            if (changed.isNotEmpty()) {
-                Log.d("DshBridge", "Changed files: $changed")
-                checkpoints.saveChangedPaths(projectId, changed)
-                val details = checkpoints.buildChangeDetails(projectId, workspace, checkpoints.readChangedPaths(projectId))
-                eventBus.emit(RuntimeEvent.FilesChanged(sessionId, details))
-            } else if (!File(checkpoints.checkpointDir(projectId), "changes.json").isFile) {
-                acceptLastChanges(projectId)
-            }
-            // `turn/end` is the authoritative result. Some Android/PRoot builds keep
-            // the SDK wrapper alive after acknowledging shutdown, so cleanup may end
-            // it with SIGKILL and produce 137 even though the turn completed normally.
+            recordWorkspaceChanges(sessionId, projectId, workspace, before)
             if (sdkResult.completed && sdkResult.failure.isBlank() && !userStopRequested) {
-                emitCompletedOnce(sessionId)
-                finishForegroundRuntime(
-                    completed = true,
-                    projectName = projectSlug,
-                    detail = AppStrings.get(context, R.string.rt_bridge_finished_in, "DeepSeek Harness", projectSlug),
+                emitCompletedOnce(
+                    sessionId,
+                    AppStrings.get(context, R.string.rt_bridge_finished_in, agentDisplayName, projectSlug),
                 )
             } else {
                 if (userStopRequested) throw DshSessionException("Stopped by user")
@@ -180,22 +119,10 @@ class DshRuntimeBridge(
             }
         }.onFailure { error ->
             Log.e("DshBridge", "Session failed", error)
-            val message = friendlyError(error)
-            emitFailureOnce(sessionId, message)
-            if (userStopRequested) {
-                cancelForegroundRuntime()
-            } else {
-                finishForegroundRuntime(
-                    completed = false,
-                    projectName = projectSlug,
-                    detail = message,
-                )
-            }
+            emitFailureOnce(sessionId, friendlyError(error))
         }
         openRouterGateway?.close()
-        activeProcess = null
-        activeSessionId = null
-        RuntimeTaskController.stopAction = null
+        clearSessionState()
         sessionId
     }
 
@@ -248,7 +175,7 @@ class DshRuntimeBridge(
                 failure = "DeepSeek Harness stopped before processing the prompt"
             }
             shutdownSent = true
-            shutdownSentAt = android.os.SystemClock.elapsedRealtime()
+            shutdownSentAt = SystemClock.elapsedRealtime()
             send("shutdown", SDK_SHUTDOWN_ID)
         }
 
@@ -280,7 +207,7 @@ class DshRuntimeBridge(
                 is DshSdkProtocolEvent.Status -> {
                     if (protocolEvent.running) {
                         sawRunning = true
-                        pushForegroundProgress(R.string.rt_bridge_working, "DeepSeek Harness")
+                        pushForegroundProgress(R.string.rt_bridge_working, agentDisplayName)
                     } else if (sawRunning && !shutdownSent) {
                         finishTurnAndShutdown()
                     }
@@ -314,9 +241,6 @@ class DshRuntimeBridge(
                 }
                 is DshSdkProtocolEvent.Failed -> failure = protocolEvent.message
                 DshSdkProtocolEvent.TurnCompleted -> {
-                    // Some dsh builds finish a turn without publishing the expected
-                    // follow-up `session.status: idle` notification. Treat turn/end
-                    // as authoritative so the UI cannot remain stuck in Running.
                     sawActivity = true
                     finishTurnAndShutdown()
                 }
@@ -330,11 +254,10 @@ class DshRuntimeBridge(
                 process.isAlive &&
                 !forcedShutdown &&
                 shutdownSentAt > 0L &&
-                android.os.SystemClock.elapsedRealtime() - shutdownSentAt >= SDK_SHUTDOWN_TIMEOUT_MS
+                SystemClock.elapsedRealtime() - shutdownSentAt >= SDK_SHUTDOWN_TIMEOUT_MS
             ) {
                 closeInput()
                 forcedShutdown = true
-                Log.w("DshBridge", "SDK acknowledged completion but did not exit; stopping its runtime wrapper")
                 process.destroyForcibly()
             }
             val available = nativeProcess.outputFile.length() - outputOffset
@@ -382,93 +305,6 @@ class DshRuntimeBridge(
         return DshSdkRunResult(completed = completed, failure = failure)
     }
 
-    override suspend fun respondToApproval(request: ToolRequest, approved: Boolean) {
-        // Headless one-shot runs expose no approval channel; nothing is ever requested.
-    }
-
-    override suspend fun stopSession(sessionId: String) = withContext(Dispatchers.IO) {
-        if (activeSessionId == sessionId) {
-            userStopRequested = true
-            activeProcess?.destroy()
-            delay(500)
-            if (activeProcess?.isAlive == true) activeProcess?.destroyForcibly()
-            emitFailureOnce(sessionId, "Stopped by user")
-        }
-    }
-
-    override suspend fun stopActiveSession() {
-        activeSessionId?.let { stopSession(it) }
-    }
-
-    fun configureProjectRoot(projectId: String, rootPath: String) {
-        checkpoints.configureProjectRoot(projectId, rootPath)
-    }
-
-    override suspend fun undoLastChanges(projectId: String): Boolean = withContext(Dispatchers.IO) {
-        val checkpoint = checkpoints.checkpointDir(projectId)
-        val backup = File(checkpoint, "project")
-        if (!backup.isDirectory || !File(checkpoint, "changes.json").isFile) return@withContext false
-        val workspace = checkpoints.ensureWorkspace(projectId)
-        val paths = checkpoints.readChangedPaths(projectId).filterNot(checkpoints::isInternalRuntimePath)
-        if (paths.isEmpty()) return@withContext false
-        paths.forEach { path ->
-            val target = checkpoints.safeWorkspaceFile(workspace, path)
-            val original = checkpoints.safeWorkspaceFile(backup, path)
-            if (original.isFile) {
-                target.parentFile?.mkdirs()
-                original.copyTo(target, overwrite = true)
-            } else if (target.isFile) {
-                target.delete()
-            }
-        }
-        checkpoint.deleteRecursively()
-        true
-    }
-
-    override suspend fun acceptLastChanges(projectId: String) {
-        withContext(Dispatchers.IO) {
-            checkpoints.checkpointDir(projectId).deleteRecursively()
-        }
-    }
-
-    override suspend fun loadPendingChanges(projectId: String): List<ChangeItem> = withContext(Dispatchers.IO) {
-        val workspace = checkpoints.ensureWorkspace(projectId)
-        val paths = checkpoints.readChangedPaths(projectId).filterNot(checkpoints::isInternalRuntimePath)
-        if (paths.isEmpty()) emptyList() else checkpoints.buildChangeDetails(projectId, workspace, paths)
-    }
-
-    override suspend fun undoFileChange(projectId: String, path: String): Boolean = withContext(Dispatchers.IO) {
-        if (checkpoints.isInternalRuntimePath(path) || path !in checkpoints.readChangedPaths(projectId)) return@withContext false
-        val workspace = checkpoints.ensureWorkspace(projectId)
-        val backup = File(checkpoints.checkpointDir(projectId), "project")
-        val target = checkpoints.safeWorkspaceFile(workspace, path)
-        val original = checkpoints.safeWorkspaceFile(backup, path)
-        if (original.isFile) {
-            target.parentFile?.mkdirs()
-            original.copyTo(target, overwrite = true)
-        } else if (target.isFile) {
-            target.delete()
-        }
-        checkpoints.removeChangedPath(projectId, path)
-        true
-    }
-
-    override suspend fun acceptFileChange(projectId: String, path: String): Boolean = withContext(Dispatchers.IO) {
-        if (checkpoints.isInternalRuntimePath(path) || path !in checkpoints.readChangedPaths(projectId)) return@withContext false
-        val workspace = checkpoints.ensureWorkspace(projectId)
-        val backup = File(checkpoints.checkpointDir(projectId), "project")
-        val current = checkpoints.safeWorkspaceFile(workspace, path)
-        val baseline = checkpoints.safeWorkspaceFile(backup, path)
-        if (current.isFile) {
-            baseline.parentFile?.mkdirs()
-            current.copyTo(baseline, overwrite = true)
-        } else if (baseline.isFile) {
-            baseline.delete()
-        }
-        checkpoints.removeChangedPath(projectId, path)
-        true
-    }
-
     private fun writeDshSettings(rootfs: File, route: DshRoute, provider: ProviderProfile) {
         val home = File(rootfs, DSH_HOME_GUEST_PATH.removePrefix("/")).apply { mkdirs() }
         val body = buildString {
@@ -499,9 +335,7 @@ class DshRuntimeBridge(
         isFinal: Boolean,
         force: Boolean = false,
     ) {
-        val now = android.os.SystemClock.elapsedRealtime()
-        // Reasoning arrives as a cumulative value. Skip throttled frames before doing
-        // any text work so a long-running agent cannot repeatedly scan a multi-MB string.
+        val now = SystemClock.elapsedRealtime()
         if (!force && now - lastThinkingUpdateAt < 400) return
         val summary = compactDshText(text, MAX_DSH_REASONING_BUFFER, MAX_DSH_REASONING_SUMMARY)
         if (summary.isBlank()) return
@@ -516,32 +350,6 @@ class DshRuntimeBridge(
             ),
         )
         pushForegroundProgress(R.string.rt_bridge_thinking)
-    }
-
-    private suspend fun emitCompletedOnce(sessionId: String) {
-        if (finishedSessions.add(sessionId)) {
-            eventBus.emit(RuntimeEvent.SessionCompleted(sessionId))
-            finishForegroundRuntime(
-                completed = true,
-                projectName = activeProjectSlug ?: AppStrings.get(context, R.string.rt_exec_default_project),
-                detail = AppStrings.get(context, R.string.rt_bridge_finished, "DeepSeek Harness"),
-            )
-        }
-    }
-
-    private suspend fun emitFailureOnce(sessionId: String, reason: String) {
-        if (finishedSessions.add(sessionId)) {
-            eventBus.emit(RuntimeEvent.SessionFailed(sessionId, reason))
-            if (userStopRequested) {
-                cancelForegroundRuntime()
-            } else {
-                finishForegroundRuntime(
-                    completed = false,
-                    projectName = activeProjectSlug ?: AppStrings.get(context, R.string.rt_exec_default_project),
-                    detail = reason,
-                )
-            }
-        }
     }
 
     private fun friendlyError(error: Throwable): String {
@@ -566,146 +374,11 @@ class DshRuntimeBridge(
         }
     }
 
-    private fun buildContextPrompt(currentPrompt: String, history: List<ChatMessage>, guestWorkspacePath: String, projectKind: ProjectKind): String {
-        val priorMessages = history
-            .filter { msg ->
-                (msg.fromUser || !msg.text.startsWith("Hi! Tell me")) &&
-                !msg.text.startsWith("Failed to") &&
-                !msg.text.startsWith("Error:") &&
-                !msg.text.contains("API Error")
-            }
-            .dropLast(1)
-            .recentWithinCharacterBudget(MAX_CONVERSATION_HISTORY_CHARACTERS)
-
-        val sb = StringBuilder()
-        sb.appendLine("<project_workspace>")
-        if (projectKind == ProjectKind.QUICK_PROJECT) {
-            sb.appendLine("This is a lightweight project workspace at $guestWorkspacePath.")
-            sb.appendLine("Respond conversationally, and use terminal or file tools whenever they are useful for the request.")
-            sb.appendLine("Keep every file and command inside this project workspace.")
-        } else {
-            sb.appendLine("The current working directory $guestWorkspacePath is the project root.")
-            sb.appendLine("Create and edit project files directly in this directory. Do not create another outer project folder unless the user explicitly asks for one.")
-            sb.appendLine("When giving commands to the user, make them runnable from this project root.")
-        }
-        if (installer.isStackInstalled(DevStack.ANDROID)) {
-            sb.appendLine("If this is an Android project, the phone already provides JDK 17, Android SDK 36, ARM64 Build Tools 35.0.0, Gradle 8.14.3, and an offline Maven repository.")
-            sb.appendLine("For newly created Android projects, use AGP 8.11.0, Kotlin 1.9.22, compileSdk 36, and Java 17 so the preinstalled offline toolchain can build immediately.")
-            sb.appendLine("The bundled Maven cache handles the base toolchain; Gradle may download project-specific libraries normally. Set android.useAndroidX=true for AndroidX or Compose projects.")
-            sb.appendLine("PocketDev globally configures Gradle to use the SDK's ARM64 aapt2. Do not use the x86_64 Maven aapt2, investigate its architecture, or add android.aapt2FromMavenOverride to the project.")
-            sb.appendLine("Use the installed `gradle` command for Android builds; do not ask the user to install Android Studio, an SDK, Gradle, ADB, or Termux.")
-        } else {
-            sb.appendLine("The optional Android build toolchain is not installed in this PocketDev runtime. You may create Android project files, but do not claim that Gradle, the Android SDK, or aapt2 is available and do not present build or install commands as verified. Tell the user to add the Android development stack in PocketDev Settings before building.")
-        }
-        sb.appendLine("For local servers, give a clear start command and never use a kill command that searches its own command text with pgrep, because it can terminate the terminal itself.")
-        sb.appendLine("</project_workspace>")
-        sb.appendLine()
-        if (priorMessages.isEmpty()) {
-            sb.appendLine(currentPrompt)
-            return sb.toString()
-        }
-        sb.appendLine("<conversation_history>")
-        sb.appendLine("The following is our prior conversation in this project. Continue naturally from where we left off.")
-        sb.appendLine()
-        for (msg in priorMessages) {
-            val role = if (msg.fromUser) "User" else "Assistant"
-            sb.appendLine("$role: ${msg.text}")
-            if (msg.attachments.isNotEmpty()) {
-                sb.appendLine("Attached files:")
-                msg.attachments.forEach { attachment ->
-                    sb.appendLine("- ${attachment.displayName}: $guestWorkspacePath/${attachment.relativePath} (${attachment.mimeType})")
-                }
-            }
-            sb.appendLine()
-        }
-        sb.appendLine("</conversation_history>")
-        sb.appendLine()
-        sb.appendLine("Now, respond to this new message from the user:")
-        sb.appendLine(currentPrompt)
-        return sb.toString()
-    }
-
-    /** Localized variant; resolves the string only when the throttle allows an update. */
-    private fun pushForegroundProgress(@androidx.annotation.StringRes id: Int, vararg args: Any) {
-        if (activeSessionId == null) return
-        if (android.os.SystemClock.elapsedRealtime() - lastForegroundProgressAt < FOREGROUND_PROGRESS_MIN_INTERVAL_MS) return
-        pushForegroundProgress(AppStrings.get(context, id, *args))
-    }
-
-    private fun pushForegroundProgress(detailRaw: String) {
-        if (activeSessionId == null) return
-        val now = android.os.SystemClock.elapsedRealtime()
-        if (now - lastForegroundProgressAt < FOREGROUND_PROGRESS_MIN_INTERVAL_MS) return
-        lastForegroundProgressAt = now
-        val detail = detailRaw.replace(Regex("\\s+"), " ").trim().take(110)
-        val elapsedMs = taskStartedAtElapsedRealtime.takeIf { it > 0 }?.let { now - it } ?: 0L
-        val text = if (elapsedMs > 0L) "$detail · ${formatElapsedShort(elapsedMs)}" else detail
-        runCatching {
-            context.startService(
-                android.content.Intent(context, RuntimeExecutionService::class.java)
-                    .setAction(RuntimeExecutionService.ACTION_PROGRESS)
-                    .putExtra(RuntimeExecutionService.EXTRA_PROJECT_NAME, activeProjectSlug)
-                    .putExtra(RuntimeExecutionService.EXTRA_DETAIL, text),
-            )
-        }
-    }
-
-    private fun formatElapsedShort(milliseconds: Long): String {
-        val totalSeconds = milliseconds / 1_000L
-        val hours = totalSeconds / 3_600L
-        val minutes = (totalSeconds % 3_600L) / 60L
-        val seconds = totalSeconds % 60L
-        return if (hours > 0) "%d:%02d:%02d".format(hours, minutes, seconds) else "%d:%02d".format(minutes, seconds)
-    }
-
-    private fun startForegroundRuntime(projectName: String) {
-        ContextCompat.startForegroundService(
-            context,
-            android.content.Intent(context, RuntimeExecutionService::class.java)
-                .setAction(RuntimeExecutionService.ACTION_START)
-                .putExtra(RuntimeExecutionService.EXTRA_PROJECT_NAME, projectName),
-        )
-    }
-
-    private fun finishForegroundRuntime(completed: Boolean, projectName: String, detail: String) {
-        if (foregroundResultPosted) return
-        foregroundResultPosted = true
-        runCatching {
-            context.startService(
-                android.content.Intent(context, RuntimeExecutionService::class.java)
-                    .setAction(
-                        if (completed) RuntimeExecutionService.ACTION_COMPLETE
-                        else RuntimeExecutionService.ACTION_FAILED,
-                    )
-                    .putExtra(RuntimeExecutionService.EXTRA_PROJECT_NAME, projectName)
-                    .putExtra(RuntimeExecutionService.EXTRA_DETAIL, detail),
-            )
-        }.onFailure { error ->
-            Log.w("DshBridge", "Could not post task result notification", error)
-            context.stopService(android.content.Intent(context, RuntimeExecutionService::class.java))
-        }
-    }
-
-    private fun cancelForegroundRuntime() {
-        if (foregroundResultPosted) return
-        foregroundResultPosted = true
-        runCatching {
-            context.startService(
-                android.content.Intent(context, RuntimeExecutionService::class.java)
-                    .setAction(RuntimeExecutionService.ACTION_CANCELLED),
-            )
-        }.onFailure {
-            context.stopService(android.content.Intent(context, RuntimeExecutionService::class.java))
-        }
-    }
-
     private class DshSessionException(message: String) : IllegalStateException(message)
 
     companion object {
         const val DSH_HOME_GUEST_PATH = "/root/.dsh"
         const val FALLBACK_KEY_ENV = "MH_DSH_API_KEY"
-        private const val FOREGROUND_PROGRESS_MIN_INTERVAL_MS = 750L
-        private const val MAX_CONVERSATION_HISTORY_CHARACTERS = 160_000
         private const val SDK_INITIALIZE_ID = 1
         private const val SDK_PROMPT_ID = 2
         private const val SDK_SHUTDOWN_ID = 3

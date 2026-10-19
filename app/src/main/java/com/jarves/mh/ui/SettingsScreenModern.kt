@@ -74,14 +74,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.jarves.mh.BuildConfig
-import com.jarves.mh.data.ApiKeyInfo
 import com.jarves.mh.model.AgentKind
 import com.jarves.mh.model.DevStack
-import com.jarves.mh.model.ProviderKind
-import com.jarves.mh.model.ProviderProfile
-import com.jarves.mh.network.ConnectionValidation
-import com.jarves.mh.network.DiscoveredModel
-import com.jarves.mh.network.ModelDiscoveryResult
 import androidx.compose.material.icons.filled.Language
 import androidx.compose.ui.res.stringResource
 import com.jarves.mh.R
@@ -95,29 +89,11 @@ private enum class SettingsSection { APPEARANCE, LANGUAGE, TOOLS, RUNTIME, DIAGN
 @Composable
 fun SettingsScreen(
     state: AppUiState,
-    onSaveProvider: (ProviderProfile, String) -> Unit,
-    onDiscoverModels: suspend (ProviderProfile, String) -> ModelDiscoveryResult,
-    onValidateProvider: suspend (ProviderProfile, String, List<DiscoveredModel>) -> ConnectionValidation,
     onSetThemeMode: (AppThemeMode) -> Unit,
     onSetLanguage: (String) -> Unit = {},
-    onPing: () -> Unit,
     onClearTerminal: () -> Unit,
-    getSavedApiKey: (ProviderKind) -> String,
-    getSavedApiKeys: (ProviderKind) -> List<ApiKeyInfo>,
-    onAddApiKey: (ProviderKind, String, String) -> List<ApiKeyInfo>,
-    onActivateApiKey: (ProviderKind, String) -> List<ApiKeyInfo>,
-    onRemoveApiKey: (ProviderKind, String) -> List<ApiKeyInfo>,
     onInstallDevStack: (DevStack) -> Unit = {},
     onRemoveDevStack: (DevStack) -> Unit = {},
-    onInstallAgent: (AgentKind) -> Unit = {},
-    onCheckAgentUpdates: () -> Unit = {},
-    onUpdateAgent: (AgentKind) -> Unit = {},
-    onStartAntigravityLogin: () -> Unit = {},
-    onSubmitAntigravityCode: (String) -> Unit = {},
-    onLogoutAntigravity: () -> Unit = {},
-    onRefreshAntigravityModels: () -> Unit = {},
-    onSetAntigravityModel: (String) -> Unit = {},
-    onSetAntigravityEffort: (String) -> Unit = {},
     initialDebugUpdateManifestUrl: String = "",
     onSetDebugUpdateManifestUrl: (String) -> Unit = {},
     onClearDebugUpdateManifestUrl: () -> Unit = {},
