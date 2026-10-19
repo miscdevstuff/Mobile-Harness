@@ -341,8 +341,9 @@ fun TerminalScreen(
                                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                                     TerminalCommandPrompt(promptPath = terminalPromptPath, command = item.command, isDark = isDark)
                                     if (item.output.isNotEmpty()) {
+                                        val cleanOutput = remember(item.id, item.output) { sanitizeTerminalOutput(item.output) }
                                         Text(
-                                            text = sanitizeTerminalOutput(item.output),
+                                            text = cleanOutput,
                                             fontFamily = FontFamily.Monospace,
                                             fontSize = 12.sp,
                                             lineHeight = 18.sp,
@@ -359,7 +360,7 @@ fun TerminalScreen(
 
                             if (liveOutput.isNotBlank()) {
                                 Text(
-                                    sanitizeTerminalOutput(liveOutput),
+                                    liveOutput,
                                     fontFamily = FontFamily.Monospace,
                                     fontSize = 12.sp,
                                     lineHeight = 18.sp,

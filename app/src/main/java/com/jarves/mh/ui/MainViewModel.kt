@@ -27,10 +27,10 @@ import com.jarves.mh.R
 import com.jarves.mh.data.ApiKeyVault
 import com.jarves.mh.data.ApiKeyInfo
 import com.jarves.mh.data.AppPreferences
+import com.jarves.mh.data.appJson
 import com.jarves.mh.data.resolveProviderSecret
 import com.jarves.mh.model.ActivityItem
 import com.jarves.mh.model.AgentKind
-import com.jarves.mh.model.ChangeItem
 import com.jarves.mh.model.ChatMessage
 import com.jarves.mh.model.ChatAttachment
 import com.jarves.mh.model.DevStack
@@ -123,6 +123,8 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.encodeToString
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -218,12 +220,62 @@ data class OpenedFileState(
     val targetColumn: Int? = null,
 )
 
+@Serializable
 data class TerminalOutputLine(
     val id: String = java.util.UUID.randomUUID().toString(),
     val command: String,
     val output: String,
     val exitCode: Int = 0,
 )
+
+private fun StringBuilder.appendBoundedTerminal(chunk: String, maxChars: Int) {
+    if (chunk.isEmpty()) return
+    if (chunk.length >= maxChars) {
+        clear()
+        append(chunk, chunk.length - maxChars, chunk.length)
+        return
+    }
+    val overflow = length + chunk.length - maxChars
+    if (overflow > 0) delete(0, overflow)
+    append(chunk)
+}
+
+/**
+ * Holds back any incomplete trailing ANSI escape sequence (up to 64 chars) so chunk-by-chunk
+ * sanitization never splits an escape sequence like `\u001B[31m` across two reads.
+ */
+private fun consumeCompleteAnsiChunk(carry: StringBuilder, incoming: String): String {
+    carry.append(incoming)
+    val len = carry.length
+    val searchLimit = maxOf(0, len - 64)
+    var escIndex = -1
+    for (i in len - 1 downTo searchLimit) {
+        if (carry[i] == '\u001B') {
+            escIndex = i
+            break
+        }
+    }
+    if (escIndex >= 0) {
+        val tail = carry.subSequence(escIndex, len)
+        val isComplete = ANSI_TERMINAL_SEQUENCE.matchesAt(tail, 0)
+        if (!isComplete && escIndex + 1 < len) {
+            val next = tail[1]
+            val couldStillComplete = next == '[' || next == ']' || next == '(' || next == ')'
+            if (couldStillComplete) {
+                val completePrefix = carry.substring(0, escIndex)
+                carry.delete(0, escIndex)
+                return sanitizeTerminalOutput(completePrefix)
+            }
+        } else if (!isComplete && escIndex == len - 1) {
+            val completePrefix = carry.substring(0, escIndex)
+            carry.delete(0, escIndex)
+            return sanitizeTerminalOutput(completePrefix)
+        }
+    }
+    val all = carry.toString()
+    carry.clear()
+    return sanitizeTerminalOutput(all)
+}
 
 private val ANSI_TERMINAL_SEQUENCE = Regex("\\u001B(?:\\][^\\u0007]*(?:\\u0007|\\u001B\\\\)|\\[[0-?]*[ -/]*[@-~]|[()][A-Z0-9])")
 
@@ -241,6 +293,7 @@ private fun antigravityModelWithEffort(model: String, effort: String): String? {
     return "${match.groupValues[1]}-$effort"
 }
 
+@Serializable
 private data class ProjectTerminalSnapshot(
     val lines: List<TerminalOutputLine> = emptyList(),
     val cwd: String = "/workspace",
@@ -329,7 +382,6 @@ data class AppUiState(
     ),
     val pendingAttachments: List<ChatAttachment> = emptyList(),
     val pendingApproval: ToolRequest? = null,
-    val changes: List<ChangeItem> = emptyList(),
     val activity: List<ActivityItem> = emptyList(),
     val liveProcess: List<ActivityItem> = emptyList(),
     val liveThinking: Boolean = false,
@@ -475,6 +527,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     // Writes are drained into a per-chat batch below so rapid activity frames do not
     // serialize hundreds of obsolete snapshots.
     private val transcriptWrites = Channel<TranscriptWrite>(Channel.UNLIMITED)
+    private val pendingDeltaLock = Any()
+    private val pendingAssistantDelta = StringBuilder()
+    @Volatile private var pendingDeltaSessionId: String? = null
+    @Volatile private var lastDeltaFlushAtElapsedMillis: Long = 0L
+    @Volatile private var deltaFlushJob: kotlinx.coroutines.Job? = null
     private val initialAgentKind = AgentKind.fromStored(preferences.agentKind)
     private val initialPrimaryAgentKind = preferences.primaryAgentKind
         .takeIf(String::isNotBlank)
@@ -699,35 +756,48 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     val native = proc as? NativeSpawnProcess
                     var offset = 0L
                     val streamed = StringBuilder()
+                    val ansiCarry = StringBuilder()
+                    val readBuffer = ByteArray(16 * 1024)
                     var autoConfirmed = false
+                    var lastUiFlushAt = 0L
                     while (proc.isAlive || (native?.outputFile?.length() ?: 0L) > offset) {
                         val file = native?.outputFile
                         val available = (file?.length() ?: 0L) - offset
-                        if (file == null || available <= 0) {
-                            Thread.sleep(50)
+                        if (file == null || available <= 0L) {
+                            delay(40)
                             continue
                         }
-                        val bytes = ByteArray(minOf(available, 16L * 1024).toInt())
+                        val toRead = minOf(available, readBuffer.size.toLong()).toInt()
                         val count = RandomAccessFile(file, "r").use { input ->
                             input.seek(offset)
-                            input.read(bytes)
+                            input.read(readBuffer, 0, toRead)
                         }
                         if (count > 0) {
                             offset += count
-                            streamed.append(bytes.decodeToString(0, count))
-                            _terminalLiveOutput.value = sanitizeTerminalOutput(streamed.toString())
-                                .trimEnd()
-                                .takeLast(MAX_PROJECT_TERMINAL_OUTPUT)
-                            if (!autoConfirmed && shouldAutoConfirmPackageCommand(command, streamed.toString())) {
-                                proc.outputStream.write("y\n".toByteArray())
-                                proc.outputStream.flush()
-                                autoConfirmed = true
+                            val cleanChunk = consumeCompleteAnsiChunk(ansiCarry, readBuffer.decodeToString(0, count))
+                            streamed.appendBoundedTerminal(cleanChunk, MAX_PROJECT_TERMINAL_OUTPUT)
+                            val now = SystemClock.elapsedRealtime()
+                            if (now - lastUiFlushAt >= LIVE_STREAM_FLUSH_INTERVAL_MS) {
+                                lastUiFlushAt = now
+                                _terminalLiveOutput.value = streamed.toString().trimEnd()
+                            }
+                            if (!autoConfirmed) {
+                                val tailStart = (streamed.length - 512).coerceAtLeast(0)
+                                if (shouldAutoConfirmPackageCommand(command, streamed.substring(tailStart))) {
+                                    proc.outputStream.write("y\n".toByteArray())
+                                    proc.outputStream.flush()
+                                    autoConfirmed = true
+                                }
                             }
                         }
                     }
+                    if (ansiCarry.isNotEmpty()) {
+                        streamed.appendBoundedTerminal(sanitizeTerminalOutput(ansiCarry.toString()), MAX_PROJECT_TERMINAL_OUTPUT)
+                        ansiCarry.clear()
+                    }
                     val exit = proc.waitFor()
                     runCatching { proc.outputStream.close() }
-                    val out = sanitizeTerminalOutput(streamed.toString()).trim()
+                    val out = streamed.toString().trim()
                     val finalOut = if (out.isNotEmpty() || exit == 0) out else str(R.string.vm_process_exited_code, exit)
                     finalOut to exit
                 }.getOrElse { str(R.string.vm_error_with_message, it.message.orEmpty()) to 1 }
@@ -1016,7 +1086,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             .also { cachedRecentExitSummary = it }
     }
 
-    private fun runProjectTerminalProcess(projectId: String, command: String, cwd: String): ProjectTerminalResult {
+    private suspend fun runProjectTerminalProcess(projectId: String, command: String, cwd: String): ProjectTerminalResult {
         if (!installer.isInstalled()) return ProjectTerminalResult(str(R.string.vm_linux_not_ready), 1, cwd)
         val installed = installer.installedRuntime()
         val project = _state.value.projects.firstOrNull { it.id == projectId }
@@ -1048,39 +1118,54 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             ?: return ProjectTerminalResult(str(R.string.vm_unsupported_terminal_process), 1, cwd)
         var offset = 0L
         val output = StringBuilder()
+        val ansiCarry = StringBuilder()
+        val readBuffer = ByteArray(16 * 1024)
         var autoConfirmed = false
+        var lastUiFlushAt = 0L
         while (process.isAlive || native.outputFile.length() > offset) {
             val available = native.outputFile.length() - offset
-            if (available <= 0) {
-                Thread.sleep(50)
+            if (available <= 0L) {
+                delay(40)
                 continue
             }
-            val bytes = ByteArray(minOf(available, 16L * 1024).toInt())
+            val toRead = minOf(available, readBuffer.size.toLong()).toInt()
             val count = RandomAccessFile(native.outputFile, "r").use { file ->
                 file.seek(offset)
-                file.read(bytes)
+                file.read(readBuffer, 0, toRead)
             }
             if (count > 0) {
                 offset += count
-                output.append(bytes.decodeToString(0, count))
-                val visible = sanitizeTerminalOutput(output.toString().substringBefore(marker))
-                    .takeLast(MAX_PROJECT_TERMINAL_OUTPUT)
-                if (!autoConfirmed && shouldAutoConfirmPackageCommand(command, visible)) {
+                val cleanChunk = consumeCompleteAnsiChunk(ansiCarry, readBuffer.decodeToString(0, count))
+                output.appendBoundedTerminal(cleanChunk, MAX_PROJECT_TERMINAL_OUTPUT + 512)
+                val tailStart = (output.length - 1024).coerceAtLeast(0)
+                val recentTail = output.substring(tailStart).substringBefore(marker)
+                if (!autoConfirmed && shouldAutoConfirmPackageCommand(command, recentTail)) {
                     process.outputStream.write("y\n".toByteArray())
                     process.outputStream.flush()
                     autoConfirmed = true
                 }
-                val detectedPreviewUrl = detectPreviewUrl(visible)
-                _state.update { current ->
-                    if (current.activeProject?.id == projectId) {
-                        current.copy(
-                            projectTerminalLiveOutput = visible,
-                            previewReady = current.previewReady || detectedPreviewUrl != null,
-                            previewUrl = detectedPreviewUrl ?: current.previewUrl,
-                        )
-                    } else current
+                val detectedPreviewUrl = detectPreviewUrl(recentTail)
+                val now = SystemClock.elapsedRealtime()
+                if (detectedPreviewUrl != null || now - lastUiFlushAt >= LIVE_STREAM_FLUSH_INTERVAL_MS) {
+                    lastUiFlushAt = now
+                    val markerIdx = output.lastIndexOf(marker)
+                    val visible = (if (markerIdx >= 0) output.substring(0, markerIdx) else output.toString())
+                        .takeLast(MAX_PROJECT_TERMINAL_OUTPUT)
+                    _state.update { current ->
+                        if (current.activeProject?.id == projectId) {
+                            current.copy(
+                                projectTerminalLiveOutput = visible,
+                                previewReady = current.previewReady || detectedPreviewUrl != null,
+                                previewUrl = detectedPreviewUrl ?: current.previewUrl,
+                            )
+                        } else current
+                    }
                 }
             }
+        }
+        if (ansiCarry.isNotEmpty()) {
+            output.appendBoundedTerminal(sanitizeTerminalOutput(ansiCarry.toString()), MAX_PROJECT_TERMINAL_OUTPUT + 512)
+            ansiCarry.clear()
         }
         val exitCode = process.waitFor()
         runCatching { process.outputStream.close() }
@@ -1091,7 +1176,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             ?.trim()
             ?.takeIf { it == guestWorkspacePath || it.startsWith("$guestWorkspacePath/") }
             ?: cwd
-        val cleanOutput = sanitizeTerminalOutput(raw.substringBefore(marker))
+        val cleanOutput = raw.substringBefore(marker)
             .trim()
             .takeLast(MAX_PROJECT_TERMINAL_OUTPUT)
         return ProjectTerminalResult(cleanOutput, exitCode, cwdAfter)
@@ -1174,22 +1259,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val guestRoot = projectGuestRoot(project)
         if (!file.isFile) return ProjectTerminalSnapshot(cwd = guestRoot)
         return runCatching {
-            val root = JSONObject(file.readText())
-            val array = root.optJSONArray("lines") ?: JSONArray()
-            val lines = (0 until array.length()).map { index ->
-                val item = array.getJSONObject(index)
-                TerminalOutputLine(
-                    id = item.optString("id").ifBlank { UUID.randomUUID().toString() },
-                    command = item.optString("command"),
-                    output = item.optString("output"),
-                    exitCode = item.optInt("exitCode"),
-                )
-            }
+            val decoded = appJson.decodeFromString<ProjectTerminalSnapshot>(file.readText())
             ProjectTerminalSnapshot(
-                lines = lines.takeLast(MAX_PROJECT_TERMINAL_HISTORY),
-                cwd = root.optString("cwd", guestRoot).takeIf {
-                    it == guestRoot || it.startsWith("$guestRoot/")
-                } ?: guestRoot,
+                lines = decoded.lines.map { line ->
+                    if (line.id.isBlank()) line.copy(id = UUID.randomUUID().toString()) else line
+                }.takeLast(MAX_PROJECT_TERMINAL_HISTORY),
+                cwd = decoded.cwd.takeIf { it == guestRoot || it.startsWith("$guestRoot/") } ?: guestRoot,
             )
         }.getOrDefault(ProjectTerminalSnapshot(cwd = guestRoot))
     }
@@ -1198,17 +1273,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         runCatching {
             val file = terminalHistoryFile(projectId)
             file.parentFile?.mkdirs()
-            val array = JSONArray()
-            lines.takeLast(MAX_PROJECT_TERMINAL_HISTORY).forEach { line ->
-                array.put(
-                    JSONObject()
-                        .put("id", line.id)
-                        .put("command", line.command)
-                        .put("output", line.output.takeLast(MAX_PROJECT_TERMINAL_OUTPUT))
-                        .put("exitCode", line.exitCode),
-                )
+            val bounded = lines.takeLast(MAX_PROJECT_TERMINAL_HISTORY).map { line ->
+                if (line.output.length > MAX_PROJECT_TERMINAL_OUTPUT) {
+                    line.copy(output = line.output.takeLast(MAX_PROJECT_TERMINAL_OUTPUT))
+                } else line
             }
-            file.writeText(JSONObject().put("cwd", cwd).put("lines", array).toString())
+            file.writeText(appJson.encodeToString(ProjectTerminalSnapshot(lines = bounded, cwd = cwd)))
         }
     }
 
@@ -1441,30 +1511,47 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 RuntimeTaskController.stopAction = ::cancelAndroidBuild
                 val native = process as? NativeSpawnProcess ?: error(str(R.string.an_unsupported_build_process))
                 var offset = 0L
+                val buildLogBuffer = StringBuilder(_state.value.androidBuildLog)
+                val ansiCarry = StringBuilder()
+                val readBuffer = ByteArray(16 * 1024)
+                var lastBuildUiFlushAt = 0L
                 while (process.isAlive || native.outputFile.length() > offset) {
                     val available = native.outputFile.length() - offset
                     if (available <= 0L) {
-                        Thread.sleep(75)
+                        delay(60)
                         continue
                     }
-                    val bytes = ByteArray(minOf(available, 16L * 1024).toInt())
+                    val toRead = minOf(available, readBuffer.size.toLong()).toInt()
                     val count = RandomAccessFile(native.outputFile, "r").use { file ->
                         file.seek(offset)
-                        file.read(bytes)
+                        file.read(readBuffer, 0, toRead)
                     }
                     if (count > 0) {
                         offset += count
-                        val chunk = sanitizeTerminalOutput(bytes.decodeToString(0, count))
-                        _state.update { current ->
-                            val nextStage = inferAndroidBuildStage(chunk, current.androidBuildStage)
-                            current.copy(
-                                androidBuildLog = (current.androidBuildLog + chunk).takeLast(MAX_ANDROID_BUILD_LOG),
-                                androidBuildStage = nextStage,
-                                androidBuildMessage = androidStageMessage(nextStage),
-                            )
+                        val chunk = consumeCompleteAnsiChunk(ansiCarry, readBuffer.decodeToString(0, count))
+                        buildLogBuffer.appendBoundedTerminal(chunk, MAX_ANDROID_BUILD_LOG)
+                        val currentStage = _state.value.androidBuildStage
+                        val nextStage = inferAndroidBuildStage(chunk, currentStage)
+                        val now = SystemClock.elapsedRealtime()
+                        if (nextStage != currentStage || now - lastBuildUiFlushAt >= BUILD_LOG_FLUSH_INTERVAL_MS) {
+                            lastBuildUiFlushAt = now
+                            val snapshotLog = buildLogBuffer.toString()
+                            _state.update { current ->
+                                current.copy(
+                                    androidBuildLog = snapshotLog,
+                                    androidBuildStage = nextStage,
+                                    androidBuildMessage = androidStageMessage(nextStage),
+                                )
+                            }
                         }
                     }
                 }
+                if (ansiCarry.isNotEmpty()) {
+                    buildLogBuffer.appendBoundedTerminal(sanitizeTerminalOutput(ansiCarry.toString()), MAX_ANDROID_BUILD_LOG)
+                    ansiCarry.clear()
+                }
+                val finalLogSnapshot = buildLogBuffer.toString()
+                _state.update { current -> current.copy(androidBuildLog = finalLogSnapshot) }
                 val exitCode = process.waitFor()
                 val buildOutput = sanitizeTerminalOutput(native.outputFile.readTailText(MAX_PROCESS_OUTPUT_BYTES))
                 finalExitCode = exitCode
@@ -1945,11 +2032,33 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     else ProcessBuilder("/system/bin/logcat", "--uid=$uid", "-v", "threadtime", "-T", since).redirectErrorStream(true).start()
                 androidLogcatProcess = process
                 _state.update { it.copy(androidLogcat = it.androidLogcat.copy(available = true, running = true, paused = false, message = null, packageName = packageName)) }
-                process.inputStream.bufferedReader().useLines { lines ->
-                    lines.forEach { raw ->
-                        if (!_state.value.androidLogcat.paused) appendAndroidLogLine(raw)
+                val pendingBatch = ArrayList<AndroidLogLine>(64)
+                var lastFlushAt = SystemClock.elapsedRealtime()
+                fun flushBatch() {
+                    if (pendingBatch.isEmpty()) return
+                    val batch = pendingBatch.toList()
+                    pendingBatch.clear()
+                    lastFlushAt = SystemClock.elapsedRealtime()
+                    _state.update { current ->
+                        current.copy(
+                            androidLogcat = current.androidLogcat.copy(
+                                lines = (current.androidLogcat.lines + batch).takeLast(MAX_LOGCAT_LINES),
+                            ),
+                        )
                     }
                 }
+                process.inputStream.bufferedReader().useLines { lines ->
+                    lines.forEach { raw ->
+                        if (!_state.value.androidLogcat.paused) {
+                            pendingBatch.add(parseAndroidLogLine(raw))
+                            val now = SystemClock.elapsedRealtime()
+                            if (pendingBatch.size >= 64 || now - lastFlushAt >= LOGCAT_FLUSH_INTERVAL_MS) {
+                                flushBatch()
+                            }
+                        }
+                    }
+                }
+                flushBatch()
             }.onFailure { error ->
                 _state.update { it.copy(androidLogcat = it.androidLogcat.copy(running = false, message = error.message ?: str(R.string.an_logcat_stopped))) }
             }
@@ -1958,20 +2067,20 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    private fun appendAndroidLogLine(raw: String) {
-        val levelChar = Regex("\\s([VDIWEF])\\s").find(raw)?.groupValues?.getOrNull(1)
+    private fun parseAndroidLogLine(raw: String): AndroidLogLine {
+        val levelChar = LOGCAT_LEVEL_REGEX.find(raw)?.groupValues?.getOrNull(1)
         val level = when (levelChar) {
             "D" -> AndroidLogLevel.DEBUG; "I" -> AndroidLogLevel.INFO; "W" -> AndroidLogLevel.WARNING
             "E" -> AndroidLogLevel.ERROR; "F" -> AndroidLogLevel.FATAL; else -> AndroidLogLevel.VERBOSE
         }
-        val location = Regex("([A-Za-z0-9_]+\\.(?:kt|java)):(\\d+)").find(raw)
-        _state.update { current ->
-            val line = AndroidLogLine(
-                id = System.nanoTime(), text = raw, level = level,
-                filePath = location?.groupValues?.getOrNull(1), line = location?.groupValues?.getOrNull(2)?.toIntOrNull(),
-            )
-            current.copy(androidLogcat = current.androidLogcat.copy(lines = (current.androidLogcat.lines + line).takeLast(MAX_LOGCAT_LINES)))
-        }
+        val location = LOGCAT_LOCATION_REGEX.find(raw)
+        return AndroidLogLine(
+            id = System.nanoTime(),
+            text = raw,
+            level = level,
+            filePath = location?.groupValues?.getOrNull(1),
+            line = location?.groupValues?.getOrNull(2)?.toIntOrNull(),
+        )
     }
 
     fun stopAndroidLogcat() {
@@ -3040,7 +3149,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 liveThinking = false,
                 taskStartedAtMillis = null,
                 taskFinishedAtMillis = null,
-                changes = emptyList(),
                 workspaceFiles = emptyList(),
                 androidProjectDetected = false,
                 filesLoading = true,
@@ -3070,10 +3178,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             )
         }
         refreshProjectFiles()
-        viewModelScope.launch {
-            val pending = activeRuntime().loadPendingChanges(project.id)
-            if (_state.value.activeProject?.id == project.id) _state.update { it.copy(changes = pending) }
-        }
     }
 
     fun closeProject() {
@@ -3121,7 +3225,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 workspaceVisible = false,
                 projectChats = emptyList(),
                 activeChatId = null,
-                changes = emptyList(),
                 workspaceFiles = emptyList(),
                 androidProjectDetected = false,
                 filesLoading = false,
@@ -3203,7 +3306,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 liveThinking = false,
                 taskStartedAtMillis = null,
                 taskFinishedAtMillis = null,
-                changes = emptyList(),
                 workspaceFiles = emptyList(),
                 androidProjectDetected = false,
                 filesLoading = true,
@@ -3888,7 +3990,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 activeProject = updated,
                 suggestedProjectRoot = null,
                 projectTerminalCwd = guestRoot,
-                changes = emptyList(),
                 toastMessage = str(R.string.vm_project_root_set, root),
             )
         }
@@ -4849,57 +4950,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         startPrompt(project, next.prompt, next.attachments)
     }
 
-    fun undoLastChanges() {
-        val project = _state.value.activeProject ?: return
-        viewModelScope.launch {
-            val restored = activeRuntime().undoLastChanges(project.id)
-            _state.update { current ->
-                current.copy(
-                    changes = if (restored) emptyList() else current.changes,
-                    activity = listOf(
-                        ActivityItem(
-                            if (restored) str(R.string.vm_changes_undone) else str(R.string.vm_undo_unavailable),
-                            if (restored) str(R.string.vm_files_restored) else str(R.string.vm_no_checkpoint),
-                        ),
-                    ) + current.activity,
-                )
-            }
-            if (restored) refreshProjectFiles()
-        }
-    }
-
-    fun keepLastChanges() {
-        val project = _state.value.activeProject ?: return
-        viewModelScope.launch {
-            activeRuntime().acceptLastChanges(project.id)
-            _state.update {
-                it.copy(
-                    changes = emptyList(),
-                    activity = listOf(ActivityItem(str(R.string.vm_changes_kept), str(R.string.vm_changes_kept_detail))) + it.activity,
-                )
-            }
-        }
-    }
-
-    fun undoFileChange(path: String) {
-        val project = _state.value.activeProject ?: return
-        viewModelScope.launch {
-            if (activeRuntime().undoFileChange(project.id, path)) {
-                _state.update { current -> current.copy(changes = current.changes.filterNot { it.path == path }) }
-                refreshProjectFiles()
-            }
-        }
-    }
-
-    fun keepFileChange(path: String) {
-        val project = _state.value.activeProject ?: return
-        viewModelScope.launch {
-            if (activeRuntime().acceptFileChange(project.id, path)) {
-                _state.update { current -> current.copy(changes = current.changes.filterNot { it.path == path }) }
-            }
-        }
-    }
-
     private fun isNoisyRuntimeItem(item: ActivityItem): Boolean {
         // Never allocate or scan an entire command/result just to classify the row.
         val combined = "${item.title} ${item.detail.take(NOISY_ITEM_SCAN_CHARS)}"
@@ -5002,7 +5052,66 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         )
     }
 
+    private fun enqueueAssistantDelta(sessionId: String, deltaText: String) {
+        if (deltaText.isEmpty()) return
+        val shouldFlushNow: Boolean
+        synchronized(pendingDeltaLock) {
+            pendingDeltaSessionId = sessionId
+            pendingAssistantDelta.append(deltaText)
+            val now = SystemClock.elapsedRealtime()
+            shouldFlushNow = now - lastDeltaFlushAtElapsedMillis >= LIVE_STREAM_FLUSH_INTERVAL_MS
+        }
+        if (shouldFlushNow) {
+            flushPendingAssistantDelta()
+        } else if (deltaFlushJob?.isActive != true) {
+            deltaFlushJob = viewModelScope.launch {
+                val waitMs = synchronized(pendingDeltaLock) {
+                    (LIVE_STREAM_FLUSH_INTERVAL_MS - (SystemClock.elapsedRealtime() - lastDeltaFlushAtElapsedMillis))
+                        .coerceIn(10L, LIVE_STREAM_FLUSH_INTERVAL_MS)
+                }
+                delay(waitMs)
+                flushPendingAssistantDelta()
+            }
+        }
+    }
+
+    private fun flushPendingAssistantDelta() {
+        deltaFlushJob?.cancel()
+        deltaFlushJob = null
+        val sessionId: String
+        val chunk: String
+        synchronized(pendingDeltaLock) {
+            if (pendingAssistantDelta.isEmpty()) return
+            sessionId = pendingDeltaSessionId ?: return
+            chunk = pendingAssistantDelta.toString()
+            pendingAssistantDelta.clear()
+            lastDeltaFlushAtElapsedMillis = SystemClock.elapsedRealtime()
+        }
+        _state.update { current ->
+            if (!current.isRunning || (current.activeSessionId != null && current.activeSessionId != sessionId)) {
+                return@update current
+            }
+            val timeline = if (current.liveThinking || current.liveProcess.any { !isNoisyRuntimeItem(it) }) {
+                finishWorkSegment(current)
+            } else {
+                current
+            }
+            val lastMessage = timeline.messages.lastOrNull()
+            if (lastMessage != null && !lastMessage.fromUser && lastMessage.workItems.isEmpty() && lastMessage.workedMillis == 0L) {
+                timeline.copy(messages = timeline.messages.dropLast(1) + lastMessage.copy(text = lastMessage.text + chunk))
+            } else {
+                timeline.copy(messages = timeline.messages + ChatMessage(fromUser = false, text = chunk))
+            }
+        }
+        persistMessages(includeLiveProcess = true)
+    }
+
     private fun onRuntimeEvent(event: RuntimeEvent) {
+        if (event is RuntimeEvent.AssistantDelta) {
+            enqueueAssistantDelta(event.sessionId, event.text)
+            return
+        }
+        flushPendingAssistantDelta()
         val terminalEventForActiveSession =
             (event is RuntimeEvent.SessionCompleted || event is RuntimeEvent.SessionFailed) &&
                 _state.value.isRunning &&
@@ -5022,19 +5131,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     activeSessionId = event.sessionId,
                     activity = current.activity.mapIndexed { index, item -> if (index == 0) item.copy(isComplete = true) else item },
                 )
-                is RuntimeEvent.AssistantDelta -> {
-                    val timeline = if (current.liveThinking || current.liveProcess.any { !isNoisyRuntimeItem(it) }) {
-                        finishWorkSegment(current)
-                    } else {
-                        current
-                    }
-                    val lastMessage = timeline.messages.lastOrNull()
-                    if (lastMessage != null && !lastMessage.fromUser && lastMessage.workItems.isEmpty() && lastMessage.workedMillis == 0L) {
-                        timeline.copy(messages = timeline.messages.dropLast(1) + lastMessage.copy(text = lastMessage.text + event.text))
-                    } else {
-                        timeline.copy(messages = timeline.messages + ChatMessage(fromUser = false, text = event.text))
-                    }
-                }
+                is RuntimeEvent.AssistantDelta -> current
                 is RuntimeEvent.ReasoningProgress -> {
                     val existingIndex = current.liveProcess.indexOfLast { it.title == "Think" }
                     // The request-level Think summary is seeded once in sendPrompt.
@@ -5167,16 +5264,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         workSegmentStartedAtMillis = current.workSegmentStartedAtMillis ?: System.currentTimeMillis(),
                     )
                 }
-                is RuntimeEvent.FilesChanged -> current.copy(
-                    changes = event.changes,
-                    liveThinking = false,
-                    liveProcess = if (event.paths.isEmpty()) current.liveProcess else current.liveProcess +
-                        ActivityItem(
-                            str(R.string.vm_files_changed),
-                            event.paths.take(4).joinToString(", ") + if (event.paths.size > 4) " " + str(R.string.vm_files_more, event.paths.size - 4) else "",
-                        ),
-                    workSegmentStartedAtMillis = current.workSegmentStartedAtMillis ?: System.currentTimeMillis(),
-                )
                 is RuntimeEvent.PreviewStarted -> current.copy(
                     previewReady = true,
                     previewUrl = event.url,
@@ -5232,9 +5319,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
             }
         }
-        if (event is RuntimeEvent.FilesChanged || event is RuntimeEvent.SessionCompleted) {
+        if (event is RuntimeEvent.SessionCompleted) {
             _state.value.activeProject?.id?.let { projectId ->
-                if (event is RuntimeEvent.FilesChanged) invalidateFolderMetadata(projectId, event.paths)
+                folderMetadataCache.keys.removeAll { it.startsWith("$projectId:") }
                 touchProject(projectId)
             }
             refreshProjectFiles()
@@ -5415,6 +5502,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         private const val MAX_ACTIVITY_DETAIL_CHARS = 8_000
         private const val NOISY_ITEM_SCAN_CHARS = 320
         private const val TRANSCRIPT_WRITE_DEBOUNCE_MS = 500L
+        private const val LIVE_STREAM_FLUSH_INTERVAL_MS = 50L
+        private const val BUILD_LOG_FLUSH_INTERVAL_MS = 80L
+        private const val LOGCAT_FLUSH_INTERVAL_MS = 65L
+        private val LOGCAT_LEVEL_REGEX = Regex("\\s([VDIWEF])\\s")
+        private val LOGCAT_LOCATION_REGEX = Regex("([A-Za-z0-9_]+\\.(?:kt|java)):(\\d+)")
         private const val DIAGNOSTICS_REFRESH_COOLDOWN_MS = 1_000L
         private const val RECENT_EXIT_CACHE_MS = 60_000L
         private const val MINIMUM_INITIALIZATION_SCREEN_MS = 3_000L

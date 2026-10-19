@@ -5,7 +5,6 @@ import androidx.core.content.ContextCompat
 import com.jarves.mh.R
 import com.jarves.mh.ui.AppStrings
 import com.jarves.mh.model.ChatMessage
-import com.jarves.mh.model.ChangeItem
 import com.jarves.mh.model.ProjectKind
 import com.jarves.mh.model.ProviderProfile
 import com.jarves.mh.model.RuntimeEvent

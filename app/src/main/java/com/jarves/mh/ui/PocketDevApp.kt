@@ -2281,10 +2281,6 @@ private fun RootScreenHost(
     var screen by rememberSaveable { mutableStateOf(RootScreen.PROJECTS) }
     var showQuickTerminal by rememberSaveable { mutableStateOf(false) }
     val keyboardVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
-    val terminalLines by viewModel.terminalLines.collectAsStateWithLifecycle()
-    val isTerminalRunning by viewModel.isTerminalRunning.collectAsStateWithLifecycle()
-    val terminalLiveOutput by viewModel.terminalLiveOutput.collectAsStateWithLifecycle()
-    val terminalCurrentCommand by viewModel.terminalCurrentCommand.collectAsStateWithLifecycle()
 
     Scaffold(
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
@@ -2379,6 +2375,10 @@ private fun RootScreenHost(
         }
     }
     if (showQuickTerminal) {
+        val terminalLines by viewModel.terminalLines.collectAsStateWithLifecycle()
+        val isTerminalRunning by viewModel.isTerminalRunning.collectAsStateWithLifecycle()
+        val terminalLiveOutput by viewModel.terminalLiveOutput.collectAsStateWithLifecycle()
+        val terminalCurrentCommand by viewModel.terminalCurrentCommand.collectAsStateWithLifecycle()
         QuickTerminalSheet(
             onDismiss = { showQuickTerminal = false },
         ) {

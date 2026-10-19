@@ -7,7 +7,6 @@ import android.util.Log
 import androidx.annotation.StringRes
 import androidx.core.content.ContextCompat
 import com.jarves.mh.R
-import com.jarves.mh.model.ChangeItem
 import com.jarves.mh.model.ChatMessage
 import com.jarves.mh.model.DevStack
 import com.jarves.mh.model.ProjectKind
@@ -46,11 +45,6 @@ interface RuntimeBridge {
     suspend fun respondToApproval(request: ToolRequest, approved: Boolean)
     suspend fun stopSession(sessionId: String)
     suspend fun stopActiveSession()
-    suspend fun undoLastChanges(projectId: String): Boolean
-    suspend fun acceptLastChanges(projectId: String)
-    suspend fun loadPendingChanges(projectId: String): List<ChangeItem>
-    suspend fun undoFileChange(projectId: String, path: String): Boolean
-    suspend fun acceptFileChange(projectId: String, path: String): Boolean
 }
 
 internal object ProviderRuntimeErrorDetector {
@@ -176,16 +170,6 @@ abstract class BaseRuntimeBridge(
     override suspend fun stopActiveSession() {
         activeSessionId?.let { stopSession(it) }
     }
-
-    override suspend fun undoLastChanges(projectId: String): Boolean = false
-
-    override suspend fun acceptLastChanges(projectId: String) = Unit
-
-    override suspend fun loadPendingChanges(projectId: String): List<ChangeItem> = emptyList()
-
-    override suspend fun undoFileChange(projectId: String, path: String): Boolean = false
-
-    override suspend fun acceptFileChange(projectId: String, path: String): Boolean = false
 
     protected fun buildContextPrompt(
         currentPrompt: String,

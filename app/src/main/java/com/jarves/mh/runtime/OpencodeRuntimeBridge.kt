@@ -5,7 +5,6 @@ import android.util.Log
 import androidx.core.content.ContextCompat
 import com.jarves.mh.R
 import com.jarves.mh.model.AgentKind
-import com.jarves.mh.model.ChangeItem
 import com.jarves.mh.model.ChatMessage
 import com.jarves.mh.model.DevStack
 import com.jarves.mh.model.ProjectKind

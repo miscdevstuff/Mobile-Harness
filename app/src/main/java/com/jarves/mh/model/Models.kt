@@ -388,9 +388,6 @@ sealed interface RuntimeEvent {
     data class ToolApproved(override val sessionId: String, val approvalId: String) : RuntimeEvent
     data class ToolRejected(override val sessionId: String, val approvalId: String) : RuntimeEvent
     data class ToolCompleted(override val sessionId: String, val toolName: String, val summary: String) : RuntimeEvent
-    data class FilesChanged(override val sessionId: String, val changes: List<ChangeItem>) : RuntimeEvent {
-        val paths: List<String> get() = changes.map { it.path }
-    }
     data class PreviewStarted(override val sessionId: String, val url: String) : RuntimeEvent
     data class SessionCompleted(override val sessionId: String) : RuntimeEvent
     data class SessionFailed(override val sessionId: String, val reason: String) : RuntimeEvent
@@ -423,24 +420,6 @@ data class ProjectChat(
     val title: String = "New chat",
     val createdAtMillis: Long = System.currentTimeMillis(),
     val updatedAtMillis: Long = System.currentTimeMillis(),
-)
-
-enum class DiffLineType { CONTEXT, ADDITION, DELETION, INFO }
-
-data class DiffLine(
-    val type: DiffLineType,
-    val text: String,
-    val oldLine: Int? = null,
-    val newLine: Int? = null,
-)
-
-data class ChangeItem(
-    val path: String,
-    val additions: Int,
-    val deletions: Int,
-    val diffLines: List<DiffLine> = emptyList(),
-    val binary: Boolean = false,
-    val accepted: Boolean? = null,
 )
 
 @Serializable
