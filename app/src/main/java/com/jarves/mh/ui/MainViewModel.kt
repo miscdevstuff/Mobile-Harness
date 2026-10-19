@@ -2876,7 +2876,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
      */
     private fun autoPingApi() {
         val profile = _state.value.provider
-        if (_state.value.agentKind == AgentKind.CLAUDE_CODE && profile.kind == ProviderKind.CLAUDE) return
+        val agent = _state.value.agentKind
+        if (agent == AgentKind.CLAUDE_CODE && profile.kind == ProviderKind.CLAUDE) return
+        if (agent == AgentKind.ANTIGRAVITY || agent == AgentKind.OPENCODE) return
+        if (profile.kind == ProviderKind.OPENCODE_CLI) return
         pingApi()
     }
 

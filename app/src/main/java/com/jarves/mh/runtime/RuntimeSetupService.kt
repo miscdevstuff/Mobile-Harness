@@ -49,6 +49,7 @@ data class RuntimeSetupSnapshot(
 object RuntimeSetupController {
     private val mutableSnapshot = MutableStateFlow(RuntimeSetupSnapshot())
     val snapshot: StateFlow<RuntimeSetupSnapshot> = mutableSnapshot.asStateFlow()
+    @Volatile private var lastPersistAtElapsedRealtime: Long = 0L
 
     @Synchronized
     fun restore(context: Context) {
@@ -119,6 +120,9 @@ object RuntimeSetupController {
                 errorMessage = null,
                 offline = false,
             ),
+            forcePersist = event.event == RuntimeInstallEvent.STAGE ||
+                event.event == RuntimeInstallEvent.COMMAND_COMPLETED ||
+                event.event == RuntimeInstallEvent.COMPLETED,
         )
     }
 
@@ -194,9 +198,13 @@ object RuntimeSetupController {
 
     fun fullLog(context: Context): String = logFile(context).readTailText(MAX_LOG_BYTES.toInt())
 
-    private fun set(context: Context, value: RuntimeSetupSnapshot) {
+    private fun set(context: Context, value: RuntimeSetupSnapshot, forcePersist: Boolean = true) {
         mutableSnapshot.value = value
-        persist(context, value)
+        val now = android.os.SystemClock.elapsedRealtime()
+        if (forcePersist || now - lastPersistAtElapsedRealtime >= PERSIST_THROTTLE_MS) {
+            lastPersistAtElapsedRealtime = now
+            persist(context, value)
+        }
     }
 
     private fun persist(context: Context, value: RuntimeSetupSnapshot) {
@@ -226,6 +234,7 @@ object RuntimeSetupController {
     private const val MAX_LOG_BYTES = 1_000_000L
     private const val MB = 1_048_576.0
     private const val DOWNLOAD_PREFIX = "Downloading:"
+    private const val PERSIST_THROTTLE_MS = 1_000L
 }
 
 class RuntimeSetupService : Service() {

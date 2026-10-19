@@ -13,7 +13,6 @@ import com.jarves.mh.model.RuntimeEvent
 import com.jarves.mh.model.ToolRequest
 import com.jarves.mh.ui.AppStrings
 import java.io.File
-import java.io.RandomAccessFile
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.Dispatchers
@@ -79,9 +78,7 @@ class ClaudeRuntimeBridge(
             startForegroundRuntime(projectSlug)
             val installed = installer.installedRuntime()
             installer.ensureSettingsAndHooks()
-            val workspace = checkpoints.ensureWorkspace(projectId)
-            checkpoints.createCheckpoint(projectId, workspace)
-            val before = checkpoints.snapshot(workspace)
+            val workspace = ensureWorkspace(projectId)
             formatGateway = if (provider.kind.protocol in setOf(
                     ProviderProtocol.OPENAI_CHAT,
                     ProviderProtocol.OPENAI_RESPONSES,
@@ -123,43 +120,20 @@ class ClaudeRuntimeBridge(
             coroutineScope {
                 val permissionWatcher = launch { watchPermissionRequests(sessionId) }
                 var lastDiagnostic = ""
-                val pendingOutput = StringBuilder()
                 val nativeProcess = process as? NativeSpawnProcess
                     ?: error("Unsupported Android runtime process")
-                var outputOffset = 0L
-                while (process.isAlive || nativeProcess.outputFile.length() > outputOffset) {
-                    val available = nativeProcess.outputFile.length() - outputOffset
-                    if (available <= 0) {
-                        delay(50)
-                        continue
-                    }
-                    val bytes = ByteArray(minOf(available, 16L * 1024).toInt())
-                    val count = RandomAccessFile(nativeProcess.outputFile, "r").use { file ->
-                        file.seek(outputOffset)
-                        file.read(bytes)
-                    }
-                    if (count > 0) {
-                        outputOffset += count
-                        pendingOutput.append(bytes.decodeToString(0, count))
-                        var newline = pendingOutput.indexOf("\n")
-                        while (newline >= 0) {
-                            val line = pendingOutput.substring(0, newline).trimEnd('\r')
-                            pendingOutput.delete(0, newline + 1)
-                            if (line.isNotBlank()) {
-                                ProviderRuntimeErrorDetector.detect(line)?.let { reason ->
-                                    process.destroyForcibly()
-                                    throw ProviderSessionException(reason)
-                                }
-                                if (!consumeClaudeEvent(sessionId, line)) {
-                                    lastDiagnostic = line.takeLast(500)
-                                }
-                            }
-                            newline = pendingOutput.indexOf("\n")
+                nativeProcess.forEachOutputLine { rawLine ->
+                    val line = rawLine.trim()
+                    if (line.isNotBlank()) {
+                        ProviderRuntimeErrorDetector.detect(line)?.let { reason ->
+                            process.destroyForcibly()
+                            throw ProviderSessionException(reason)
+                        }
+                        if (!consumeClaudeEvent(sessionId, line)) {
+                            lastDiagnostic = line.takeLast(500)
                         }
                     }
-                }
-                pendingOutput.toString().trim().takeIf(String::isNotBlank)?.let { line ->
-                    if (!consumeClaudeEvent(sessionId, line)) lastDiagnostic = line.takeLast(500)
+                    false
                 }
                 val exit = process.waitFor()
                 permissionWatcher.cancelAndJoin()
@@ -167,7 +141,6 @@ class ClaudeRuntimeBridge(
                     permission.response.writeText("deny")
                     pending.remove(permission.request.approvalId)
                 }
-                recordWorkspaceChanges(sessionId, projectId, workspace, before)
                 if (exit == 0) {
                     emitCompletedOnce(
                         sessionId,

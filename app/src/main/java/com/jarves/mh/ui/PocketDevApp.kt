@@ -214,14 +214,11 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.jarves.mh.model.ActivityItem
 import com.jarves.mh.model.AgentKind
-import com.jarves.mh.model.ChangeItem
 import com.jarves.mh.model.ChatMessage
 import com.jarves.mh.model.ChatAttachment
 import com.jarves.mh.model.DevStack
 import com.jarves.mh.model.DEEPSEEK_HARNESS_PROVIDERS
 import com.jarves.mh.model.DSH_PROTOCOL_PROVIDERS
-import com.jarves.mh.model.DiffLine
-import com.jarves.mh.model.DiffLineType
 import com.jarves.mh.model.Project
 import com.jarves.mh.model.ProjectKind
 import com.jarves.mh.model.ProjectType
@@ -289,7 +286,6 @@ private enum class WorkspaceTab(@StringRes val labelRes: Int, val icon: ImageVec
     CHAT(R.string.tab_chat, Icons.Default.AutoAwesome),
     FILES(R.string.tab_files, Icons.Default.Folder),
     TERMINAL(R.string.tab_terminal, Icons.Default.Terminal),
-    CHANGES(R.string.tab_changes, Icons.Default.Code),
     PREVIEW(R.string.tab_preview, Icons.Default.Preview),
 }
 
@@ -420,10 +416,6 @@ fun PocketDevApp(viewModel: MainViewModel = viewModel()) {
             onSaveFile = viewModel::saveOpenedFile,
             onReloadFile = viewModel::reloadOpenedFile,
             onDismissFileConflict = viewModel::dismissFileConflict,
-            onUndoChanges = viewModel::undoLastChanges,
-            onKeepChanges = viewModel::keepLastChanges,
-            onUndoFileChange = viewModel::undoFileChange,
-            onKeepFileChange = viewModel::keepFileChange,
             onCreateChat = viewModel::createChat,
             onSwitchChat = viewModel::switchChat,
             onTerminalRun = viewModel::requestProjectTerminalCommand,
@@ -2492,7 +2484,7 @@ private fun ProviderSetupScreen(
     initial: ProviderProfile,
     onboarding: Boolean,
     agentKind: AgentKind = AgentKind.CLAUDE_CODE,
-    initialStep: Int = if (onboarding) 0 else 1,
+    initialStep: Int = 1,
     onBack: (() -> Unit)? = null,
     currentLanguageCode: String = "system",
     onSetLanguage: ((String) -> Unit)? = null,
@@ -2570,7 +2562,7 @@ private fun ProviderSetupScreen(
             if (onboarding) StepDots(step)
             Spacer(Modifier.height(16.dp))
             when (step) {
-                1 -> ProviderChoiceStep(
+                0, 1 -> ProviderChoiceStep(
                     selected = selected,
                     agentKind = agentKind,
                     onSelected = {
@@ -4045,10 +4037,6 @@ private fun WorkspaceScreen(
     onSaveFile: () -> Unit,
     onReloadFile: () -> Unit,
     onDismissFileConflict: () -> Unit,
-    onUndoChanges: () -> Unit,
-    onKeepChanges: () -> Unit,
-    onUndoFileChange: (String) -> Unit,
-    onKeepFileChange: (String) -> Unit,
     onCreateChat: () -> Unit,
     onSwitchChat: (String) -> Unit,
     onTerminalRun: (String) -> Unit,
@@ -4335,7 +4323,7 @@ private fun WorkspaceScreen(
         },
         bottomBar = {
             if (!keyboardVisible) NavigationBar(containerColor = MaterialTheme.colorScheme.surface) {
-                WorkspaceTab.entries.filter { it != WorkspaceTab.CHANGES }.forEach { tab ->
+                WorkspaceTab.entries.forEach { tab ->
                     NavigationBarItem(
                         selected = selectedTab == tab,
                         onClick = {
@@ -4455,13 +4443,6 @@ private fun WorkspaceScreen(
                     showThemeAction = false,
                     showQuickCommands = false,
                     compactHeader = true,
-                )
-                WorkspaceTab.CHANGES -> ChangesTab(
-                    state.changes,
-                    onUndoChanges,
-                    onKeepChanges,
-                    onUndoFileChange,
-                    onKeepFileChange,
                 )
                 WorkspaceTab.PREVIEW -> PreviewTab(state.previewReady, state.previewUrl)
             }
@@ -6300,102 +6281,14 @@ private fun AnimatedThinkingDots(
     dotColor: Color = MaterialTheme.colorScheme.onSurfaceVariant,
 ) {
     val transition = rememberInfiniteTransition(label = "thinking_dots")
-    val dot1Offset by transition.animateFloat(
+    val phase by transition.animateFloat(
         initialValue = 0f,
-        targetValue = -3.5f,
-        animationSpec = infiniteRepeatable(
-            animation = keyframes {
-                durationMillis = 1100
-                0f at 0
-                -3.5f at 220
-                0f at 440
-                0f at 1100
-            },
-            repeatMode = RepeatMode.Restart,
-            initialStartOffset = StartOffset(0),
-        ),
-        label = "dot1",
-    )
-    val dot2Offset by transition.animateFloat(
-        initialValue = 0f,
-        targetValue = -3.5f,
-        animationSpec = infiniteRepeatable(
-            animation = keyframes {
-                durationMillis = 1100
-                0f at 0
-                -3.5f at 220
-                0f at 440
-                0f at 1100
-            },
-            repeatMode = RepeatMode.Restart,
-            initialStartOffset = StartOffset(180),
-        ),
-        label = "dot2",
-    )
-    val dot3Offset by transition.animateFloat(
-        initialValue = 0f,
-        targetValue = -3.5f,
-        animationSpec = infiniteRepeatable(
-            animation = keyframes {
-                durationMillis = 1100
-                0f at 0
-                -3.5f at 220
-                0f at 440
-                0f at 1100
-            },
-            repeatMode = RepeatMode.Restart,
-            initialStartOffset = StartOffset(360),
-        ),
-        label = "dot3",
-    )
-
-    val dot1Alpha by transition.animateFloat(
-        initialValue = 0.35f,
         targetValue = 1f,
         animationSpec = infiniteRepeatable(
-            animation = keyframes {
-                durationMillis = 1100
-                0.35f at 0
-                1f at 220
-                0.35f at 440
-                0.35f at 1100
-            },
+            animation = tween(durationMillis = 1_100),
             repeatMode = RepeatMode.Restart,
-            initialStartOffset = StartOffset(0),
         ),
-        label = "dot1_alpha",
-    )
-    val dot2Alpha by transition.animateFloat(
-        initialValue = 0.35f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(
-            animation = keyframes {
-                durationMillis = 1100
-                0.35f at 0
-                1f at 220
-                0.35f at 440
-                0.35f at 1100
-            },
-            repeatMode = RepeatMode.Restart,
-            initialStartOffset = StartOffset(180),
-        ),
-        label = "dot2_alpha",
-    )
-    val dot3Alpha by transition.animateFloat(
-        initialValue = 0.35f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(
-            animation = keyframes {
-                durationMillis = 1100
-                0.35f at 0
-                1f at 220
-                0.35f at 440
-                0.35f at 1100
-            },
-            repeatMode = RepeatMode.Restart,
-            initialStartOffset = StartOffset(360),
-        ),
-        label = "dot3_alpha",
+        label = "dots_phase",
     )
 
     Row(
@@ -6403,24 +6296,18 @@ private fun AnimatedThinkingDots(
         horizontalArrangement = Arrangement.spacedBy(3.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Box(
-            Modifier
-                .size(3.5.dp)
-                .graphicsLayer { translationY = dot1Offset * density }
-                .background(dotColor.copy(alpha = dot1Alpha), CircleShape),
-        )
-        Box(
-            Modifier
-                .size(3.5.dp)
-                .graphicsLayer { translationY = dot2Offset * density }
-                .background(dotColor.copy(alpha = dot2Alpha), CircleShape),
-        )
-        Box(
-            Modifier
-                .size(3.5.dp)
-                .graphicsLayer { translationY = dot3Offset * density }
-                .background(dotColor.copy(alpha = dot3Alpha), CircleShape),
-        )
+        repeat(3) { index ->
+            val shifted = ((phase - index * 0.16f) + 1f) % 1f
+            val wave = if (shifted < 0.4f) kotlin.math.sin((shifted / 0.4f) * Math.PI).toFloat() else 0f
+            val offsetY = -3.5f * wave
+            val alpha = 0.35f + 0.65f * wave
+            Box(
+                Modifier
+                    .size(3.5.dp)
+                    .graphicsLayer { translationY = offsetY * density }
+                    .background(dotColor.copy(alpha = alpha), CircleShape),
+            )
+        }
     }
 }
 
@@ -6698,124 +6585,6 @@ private fun formatFileSize(bytes: Long): String = when {
     bytes < 1_024 -> "$bytes B"
     bytes < 1_048_576 -> "%.1f KB".format(bytes / 1_024.0)
     else -> "%.1f MB".format(bytes / 1_048_576.0)
-}
-
-@Composable
-private fun ChangesTab(
-    changes: List<ChangeItem>,
-    onUndo: () -> Unit,
-    onKeep: () -> Unit,
-    onUndoFile: (String) -> Unit,
-    onKeepFile: (String) -> Unit,
-) {
-    var expandedPath by rememberSaveable { mutableStateOf<String?>(null) }
-    LazyColumn(contentPadding = PaddingValues(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        item {
-            Surface(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(14.dp),
-                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.38f),
-                border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f)),
-            ) {
-                Column(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp)) {
-                    Text(stringResource(R.string.tab_changes), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                    Text(stringResource(R.string.ws_review_ai_changes), color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-            }
-        }
-        if (changes.isEmpty()) item { EmptyState(Icons.Default.Code, stringResource(R.string.ws_no_changes_yet), stringResource(R.string.ws_no_changes_desc)) }
-        items(changes, key = { it.path }) { change ->
-            val expanded = expandedPath == change.path
-            Card(Modifier.fillMaxWidth()) {
-                Column {
-                    Row(
-                        Modifier.fillMaxWidth().clickable { expandedPath = if (expanded) null else change.path }.padding(15.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Icon(Icons.Default.Description, null)
-                        Spacer(Modifier.width(10.dp))
-                        Column(Modifier.weight(1f)) {
-                            Text(change.path, fontWeight = FontWeight.Medium, maxLines = 1)
-                            Text(
-                                if (expanded) stringResource(R.string.ws_hide_diff) else stringResource(R.string.ws_tap_review_diff),
-                                fontSize = 11.sp,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                        Text("+${change.additions}", color = PocketGreen)
-                        Spacer(Modifier.width(7.dp))
-                        Text("-${change.deletions}", color = MaterialTheme.colorScheme.error)
-                    }
-                    if (expanded) {
-                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                        Column(
-                            Modifier.fillMaxWidth().background(Color(0xFF0B0E14)).horizontalScroll(rememberScrollState()),
-                        ) {
-                            change.diffLines.forEach { line -> DiffLineRow(line) }
-                        }
-                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                        Row(
-                            Modifier.fillMaxWidth().padding(12.dp),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        ) {
-                            OutlinedButton(
-                                onClick = {
-                                    expandedPath = null
-                                    onUndoFile(change.path)
-                                },
-                                modifier = Modifier.weight(1f),
-                            ) { Text(stringResource(R.string.ws_undo_file)) }
-                            Button(
-                                onClick = {
-                                    expandedPath = null
-                                    onKeepFile(change.path)
-                                },
-                                modifier = Modifier.weight(1f),
-                            ) { Text(stringResource(R.string.ws_keep_file)) }
-                        }
-                    }
-                }
-            }
-        }
-        if (changes.isNotEmpty()) item {
-            Row(horizontalArrangement = Arrangement.spacedBy(9.dp)) {
-                OutlinedButton(onClick = onUndo, Modifier.weight(1f)) { Text(stringResource(R.string.ws_undo_task)) }
-                Button(onClick = onKeep, Modifier.weight(1f)) { Text(stringResource(R.string.chat_keep_changes)) }
-            }
-        }
-    }
-}
-
-@Composable
-private fun DiffLineRow(line: DiffLine) {
-    val marker = when (line.type) {
-        DiffLineType.ADDITION -> "+"
-        DiffLineType.DELETION -> "-"
-        DiffLineType.CONTEXT -> " "
-        DiffLineType.INFO -> "·"
-    }
-    val background = when (line.type) {
-        DiffLineType.ADDITION -> Color(0xFF123226)
-        DiffLineType.DELETION -> Color(0xFF3A1D22)
-        else -> Color.Transparent
-    }
-    val foreground = when (line.type) {
-        DiffLineType.ADDITION -> Color(0xFF83E6B8)
-        DiffLineType.DELETION -> Color(0xFFFFA4A4)
-        DiffLineType.INFO -> Color(0xFF8993A4)
-        DiffLineType.CONTEXT -> Color(0xFFD5DAE3)
-    }
-    val oldNumber = line.oldLine?.toString().orEmpty().padStart(4)
-    val newNumber = line.newLine?.toString().orEmpty().padStart(4)
-    Text(
-        text = "$oldNumber $newNumber  $marker ${line.text}",
-        modifier = Modifier.fillMaxWidth().background(background).padding(horizontal = 8.dp, vertical = 2.dp),
-        color = foreground,
-        fontFamily = FontFamily.Monospace,
-        fontSize = 11.sp,
-        lineHeight = 16.sp,
-        softWrap = false,
-    )
 }
 
 @Composable

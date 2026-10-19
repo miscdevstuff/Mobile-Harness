@@ -204,7 +204,6 @@ dependencies {
     implementation("org.apache.commons:commons-compress:1.27.1")
     implementation("com.github.luben:zstd-jni:1.5.7-12@aar")
     implementation("com.mikepenz:multiplatform-markdown-renderer-m3:0.32.0")
-    implementation("io.github.java-diff-utils:java-diff-utils:4.17")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
 
     testImplementation("junit:junit:4.13.2")

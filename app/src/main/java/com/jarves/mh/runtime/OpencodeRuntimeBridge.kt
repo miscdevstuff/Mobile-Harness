@@ -19,7 +19,6 @@ import com.jarves.mh.network.DiscoveredModel
 import com.jarves.mh.network.ModelResponseParser
 import com.jarves.mh.ui.AppStrings
 import java.io.File
-import java.io.RandomAccessFile
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.Dispatchers
@@ -418,9 +417,7 @@ class OpencodeRuntimeBridge(
             check(installer.isAgentInstalled(AgentKind.OPENCODE)) {
                 "OpenCode is not installed. Open Settings → Coding agent to install it."
             }
-            val workspace = checkpoints.ensureWorkspace(projectId)
-            checkpoints.createCheckpoint(projectId, workspace)
-            val before = checkpoints.snapshot(workspace)
+            val workspace = ensureWorkspace(projectId)
             val guestWorkspacePath = "/workspace/$projectSlug"
             val attachments = conversationHistory.lastOrNull { it.fromUser }?.attachments.orEmpty()
             val savedOpencodeSession = conversationId(projectId)?.takeIf { it.startsWith("ses_") }
@@ -458,8 +455,6 @@ class OpencodeRuntimeBridge(
                     resumeOpencodeSessionId = null,
                 )
             }
-
-            recordWorkspaceChanges(sessionId, projectId, workspace, before)
 
             if (outcome.completed && outcome.failure.isBlank() && !userStopRequested) {
                 emitCompletedOnce(sessionId)
@@ -524,97 +519,61 @@ class OpencodeRuntimeBridge(
 
         val nativeProcess = process as? NativeSpawnProcess
             ?: error("Unsupported Android runtime process")
-        var offset = 0L
-        val pending = StringBuilder()
         val streamed = StringBuilder()
         var failure = ""
         var nextReasoningBlockId = 1L
         val reasoningBlocks = LinkedHashMap<String, Long>()
 
-        suspend fun processLine(line: String) {
+        nativeProcess.forEachOutputLine(pollIntervalMs = 60L, maxPendingChars = MAX_PENDING_CHARS) { line ->
             val trimmed = line.trim()
-            if (trimmed.isEmpty()) return
-            val parsed = OpencodeEventParser.parse(trimmed)
-            if (parsed.isEmpty()) {
-                if (!trimmed.startsWith("proot warning:", ignoreCase = true) &&
-                    !trimmed.startsWith("{")
-                ) {
-                    ProviderRuntimeErrorDetector.detect(trimmed)?.let { detected ->
-                        if (failure.isBlank()) failure = detected
-                    }
-                }
-                return
-            }
-            for (event in parsed) {
-                when (event) {
-                    is OpencodeParsedEvent.SessionIdentified -> {
-                        saveConversationId(projectId, event.sessionId)
-                    }
-                    is OpencodeParsedEvent.Error -> {
-                        if (failure.isBlank()) failure = event.message
-                    }
-                    is OpencodeParsedEvent.Reasoning -> {
-                        val isNew = event.partId !in reasoningBlocks
-                        val blockId = reasoningBlocks.getOrPut(event.partId) { nextReasoningBlockId++ }
-                        pushForegroundProgress(R.string.rt_bridge_thinking)
-                        eventBus.emit(
-                            RuntimeEvent.ReasoningSummary(
-                                sessionId = sessionId,
-                                summary = event.text.take(MAX_REASONING_SUMMARY_CHARS),
-                                blockId = blockId,
-                                startsNewBlock = isNew,
-                                isFinal = true,
-                            ),
-                        )
-                    }
-                    is OpencodeParsedEvent.ToolUse -> {
-                        val compactDetail = event.detail.lineSequence().firstOrNull().orEmpty().take(80).ifBlank { event.toolName }
-                        pushForegroundProgress(R.string.rt_bridge_running_tool, event.toolName, compactDetail)
-                        eventBus.emit(RuntimeEvent.ToolStarted(sessionId, event.toolName, event.detail))
-                        if (event.completed) {
-                            eventBus.emit(RuntimeEvent.ToolCompleted(sessionId, event.toolName, event.detail))
-                        }
-                        detectPreviewUrlInToolOutput(event.detail)?.let { url ->
-                            eventBus.emit(RuntimeEvent.PreviewStarted(sessionId, url))
+            if (trimmed.isNotEmpty()) {
+                val parsed = OpencodeEventParser.parse(trimmed)
+                if (parsed.isEmpty()) {
+                    if (!trimmed.startsWith("proot warning:", ignoreCase = true) && !trimmed.startsWith("{")) {
+                        ProviderRuntimeErrorDetector.detect(trimmed)?.let { detected ->
+                            if (failure.isBlank()) failure = detected
                         }
                     }
-                    is OpencodeParsedEvent.Text -> {
-                        pushForegroundProgress(R.string.rt_bridge_working, agentDisplayName)
-                        emitTextDelta(sessionId, streamed, event.text)
+                } else {
+                    for (event in parsed) {
+                        when (event) {
+                            is OpencodeParsedEvent.SessionIdentified -> saveConversationId(projectId, event.sessionId)
+                            is OpencodeParsedEvent.Error -> if (failure.isBlank()) failure = event.message
+                            is OpencodeParsedEvent.Reasoning -> {
+                                val isNew = event.partId !in reasoningBlocks
+                                val blockId = reasoningBlocks.getOrPut(event.partId) { nextReasoningBlockId++ }
+                                pushForegroundProgress(R.string.rt_bridge_thinking)
+                                eventBus.emit(
+                                    RuntimeEvent.ReasoningSummary(
+                                        sessionId = sessionId,
+                                        summary = event.text.take(MAX_REASONING_SUMMARY_CHARS),
+                                        blockId = blockId,
+                                        startsNewBlock = isNew,
+                                        isFinal = true,
+                                    ),
+                                )
+                            }
+                            is OpencodeParsedEvent.ToolUse -> {
+                                val compactDetail = event.detail.lineSequence().firstOrNull().orEmpty().take(80).ifBlank { event.toolName }
+                                pushForegroundProgress(R.string.rt_bridge_running_tool, event.toolName, compactDetail)
+                                eventBus.emit(RuntimeEvent.ToolStarted(sessionId, event.toolName, event.detail))
+                                if (event.completed) {
+                                    eventBus.emit(RuntimeEvent.ToolCompleted(sessionId, event.toolName, event.detail))
+                                }
+                                detectPreviewUrlInToolOutput(event.detail)?.let { url ->
+                                    eventBus.emit(RuntimeEvent.PreviewStarted(sessionId, url))
+                                }
+                            }
+                            is OpencodeParsedEvent.Text -> {
+                                pushForegroundProgress(R.string.rt_bridge_working, agentDisplayName)
+                                emitTextDelta(sessionId, streamed, event.text)
+                            }
+                            is OpencodeParsedEvent.StepFinished -> Unit
+                        }
                     }
-                    is OpencodeParsedEvent.StepFinished -> Unit
                 }
             }
-        }
-
-        while (process.isAlive || (nativeProcess.outputFile.length() > offset)) {
-            val file = nativeProcess.outputFile
-            if (file.length() > offset) {
-                RandomAccessFile(file, "r").use { input ->
-                    input.seek(offset)
-                    val available = (input.length() - offset).coerceAtMost(256 * 1024).toInt()
-                    val bytes = ByteArray(available)
-                    input.readFully(bytes)
-                    offset += available
-                    pending.append(bytes.toString(Charsets.UTF_8).replace('\r', '\n'))
-                }
-                var newline = pending.indexOf("\n")
-                while (newline >= 0) {
-                    val line = pending.substring(0, newline)
-                    pending.delete(0, newline + 1)
-                    processLine(line)
-                    newline = pending.indexOf("\n")
-                    if (pending.length > MAX_PENDING_CHARS) {
-                        pending.delete(0, pending.length - MAX_PENDING_CHARS)
-                    }
-                }
-            } else {
-                delay(60)
-            }
-        }
-        val tail = pending.toString().trim()
-        if (tail.isNotBlank()) {
-            processLine(tail)
+            false
         }
         val exit = process.waitFor()
         return OpencodeRunOutcome(

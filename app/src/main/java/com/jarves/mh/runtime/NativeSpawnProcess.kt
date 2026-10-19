@@ -7,6 +7,10 @@ import java.io.FileInputStream
 import java.io.FileOutputStream
 import java.io.InputStream
 import java.io.OutputStream
+import java.io.RandomAccessFile
+import kotlin.coroutines.coroutineContext
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 
 internal class NativeSpawnProcess private constructor(
     private val pid: Int,
@@ -109,4 +113,57 @@ private object NativeSpawn {
     ): IntArray
     external fun waitFor(pid: Int, noHang: Boolean): Int
     external fun kill(pid: Int, signal: Int): Int
+}
+
+/**
+ * Streams lines from [NativeSpawnProcess.outputFile] as the process writes them,
+ * decoding only new byte chunks instead of re-splitting the entire accumulated output.
+ */
+internal suspend fun NativeSpawnProcess.forEachOutputLine(
+    pollIntervalMs: Long = 50L,
+    maxPendingChars: Int = 256 * 1024,
+    onIdleTick: (suspend () -> Unit)? = null,
+    onLine: suspend (String) -> Boolean,
+) {
+    var offset = 0L
+    val pending = StringBuilder()
+    val buffer = ByteArray(16 * 1024)
+    var stopEarly = false
+    while (!stopEarly && (isAlive || outputFile.length() > offset)) {
+        coroutineContext.ensureActive()
+        val available = outputFile.length() - offset
+        if (available <= 0L) {
+            onIdleTick?.invoke()
+            delay(pollIntervalMs)
+            continue
+        }
+        val toRead = minOf(available, buffer.size.toLong()).toInt()
+        val count = RandomAccessFile(outputFile, "r").use { raf ->
+            raf.seek(offset)
+            raf.read(buffer, 0, toRead)
+        }
+        if (count <= 0) {
+            delay(pollIntervalMs)
+            continue
+        }
+        offset += count
+        pending.append(buffer.decodeToString(0, count).replace('\r', '\n'))
+        var newline = pending.indexOf("\n")
+        while (newline >= 0) {
+            val line = pending.substring(0, newline)
+            pending.delete(0, newline + 1)
+            if (onLine(line)) {
+                stopEarly = true
+                break
+            }
+            newline = pending.indexOf("\n")
+        }
+        if (pending.length > maxPendingChars) {
+            pending.delete(0, pending.length - maxPendingChars)
+        }
+    }
+    if (!stopEarly && pending.isNotEmpty()) {
+        val tail = pending.toString().trimEnd('\r', '\n')
+        if (tail.isNotEmpty()) onLine(tail)
+    }
 }

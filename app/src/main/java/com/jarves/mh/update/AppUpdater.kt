@@ -39,16 +39,12 @@ class AppUpdater(
     fun check(): AppUpdateInfo? {
         val manifestUrl = manifestUrlOverride.ifBlank { BuildConfig.APP_UPDATE_MANIFEST_URL }
         if (!manifestUrl.startsWith("https://")) return null
-        val client = sharedHttpClient.newBuilder()
-            .connectTimeout(8, TimeUnit.SECONDS)
-            .readTimeout(10, TimeUnit.SECONDS)
-            .build()
         val request = Request.Builder()
             .url(manifestUrl)
             .header("Accept", "application/json")
             .get()
             .build()
-        client.newCall(request).execute().use { response ->
+        checkHttpClient.newCall(request).execute().use { response ->
             if (!response.isSuccessful) return null
             val body = response.body?.string().orEmpty()
             val root = JSONObject(body)
@@ -74,12 +70,8 @@ class AppUpdater(
         val directory = File(context.filesDir, "updates").also { it.mkdirs() }
         val partial = File(directory, "mobile-harness-${BuildConfig.APP_VARIANT}.apk.part")
         val target = File(directory, "mobile-harness-${BuildConfig.APP_VARIANT}.apk")
-        val client = sharedHttpClient.newBuilder()
-            .connectTimeout(15, TimeUnit.SECONDS)
-            .readTimeout(30, TimeUnit.SECONDS)
-            .build()
         val request = Request.Builder().url(info.apkUrl).get().build()
-        client.newCall(request).execute().use { response ->
+        downloadHttpClient.newCall(request).execute().use { response ->
             check(response.isSuccessful) { str(R.string.rt_update_download_failed, response.code) }
             val responseBody = checkNotNull(response.body) { str(R.string.rt_update_download_failed, response.code) }
             val total = responseBody.contentLength().takeIf { it > 0 } ?: info.sizeBytes
@@ -136,4 +128,15 @@ class AppUpdater(
 
     private fun sha256(bytes: ByteArray): String = MessageDigest.getInstance("SHA-256")
         .digest(bytes).joinToString("") { "%02x".format(it) }
+
+    private companion object {
+        val checkHttpClient = sharedHttpClient.newBuilder()
+            .connectTimeout(8, TimeUnit.SECONDS)
+            .readTimeout(10, TimeUnit.SECONDS)
+            .build()
+        val downloadHttpClient = sharedHttpClient.newBuilder()
+            .connectTimeout(15, TimeUnit.SECONDS)
+            .readTimeout(30, TimeUnit.SECONDS)
+            .build()
+    }
 }

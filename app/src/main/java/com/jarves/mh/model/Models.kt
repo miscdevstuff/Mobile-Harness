@@ -445,13 +445,12 @@ data class ChangeItem(
 
 @Serializable
 data class ActivityItem(
-    val title: String = "",
-    val detail: String = "",
+    val title: String,
+    val detail: String,
     val isComplete: Boolean = true,
     val isCommand: Boolean = false,
 )
 
-@Serializable
 data class GitHubRepository(
     val fullName: String,
     val cloneUrl: String,

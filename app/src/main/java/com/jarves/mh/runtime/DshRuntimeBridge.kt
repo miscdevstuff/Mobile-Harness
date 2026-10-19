@@ -64,9 +64,7 @@ class DshRuntimeBridge(
                 "DeepSeek Harness is not installed. Open Settings → Coding agent to install it."
             }
             installer.ensureDshAndroidCompatibility()
-            val workspace = checkpoints.ensureWorkspace(projectId)
-            checkpoints.createCheckpoint(projectId, workspace)
-            val before = checkpoints.snapshot(workspace)
+            val workspace = ensureWorkspace(projectId)
             val baseRoute = DshRouteMapper.forProfile(provider)
             openRouterGateway = if (
                 provider.kind == ProviderKind.LLM_ROUTER && provider.openRouterProviders.isNotEmpty()
@@ -107,7 +105,6 @@ class DshRuntimeBridge(
                 prompt = contextPrompt,
             )
             val exit = process.waitFor()
-            recordWorkspaceChanges(sessionId, projectId, workspace, before)
             if (sdkResult.completed && sdkResult.failure.isBlank() && !userStopRequested) {
                 emitCompletedOnce(
                     sessionId,

@@ -11,7 +11,6 @@ import com.jarves.mh.ui.localizedTitle
 import java.io.BufferedInputStream
 import java.io.File
 import java.io.FileOutputStream
-import java.io.RandomAccessFile
 import com.jarves.mh.network.sharedHttpClient
 import java.util.concurrent.TimeUnit
 import okhttp3.Request
@@ -86,6 +85,10 @@ class RuntimeInstaller(private val context: Context) {
         AppStrings.get(context, id, *args)
 
     fun isInstalled(): Boolean {
+        val now = android.os.SystemClock.elapsedRealtime()
+        if (now - lastInstalledCheckAtElapsedRealtime < INSTALLED_CACHE_TTL_MS) {
+            return cachedInstalledResult
+        }
         val proot = File(context.applicationInfo.nativeLibraryDir, "libproot.so")
         val rootfsLayoutReady = ensureRootfsCompatibilityLinks()
         // Devices set up before staged toolchains keep working through the legacy marker;
@@ -100,6 +103,8 @@ class RuntimeInstaller(private val context: Context) {
             (legacyLanguageTools || coreToolsReady) &&
             coreReadyMarker.exists()
         if (ready) repairLegacyMacosMetadata()
+        cachedInstalledResult = ready
+        lastInstalledCheckAtElapsedRealtime = now
         return ready
     }
 
@@ -241,6 +246,7 @@ class RuntimeInstaller(private val context: Context) {
             com.jarves.mh.model.AgentKind.ANTIGRAVITY -> ensureAgyInstalled(proot, 0.985f, onProgress)
             com.jarves.mh.model.AgentKind.OPENCODE -> ensureOpencodeInstalled(proot, 0.985f, onProgress)
         }
+        invalidateInstalledCache()
         onProgress(RuntimeInstallProgress(str(R.string.rt_install_setup_complete), 1f))
         return InstalledRuntime(proot, rootfs)
     }
@@ -1449,45 +1455,28 @@ class RuntimeInstaller(private val context: Context) {
         val collected = StringBuilder()
         try {
             withTimeout(timeoutMs) {
-                var offset = 0L
-                var pending = ""
-                while (running.isAlive || (native?.outputFile?.length() ?: 0L) > offset) {
-                    coroutineContext.ensureActive()
-                    val file = native?.outputFile
-                    if (file != null && file.length() > offset) {
-                        RandomAccessFile(file, "r").use { input ->
-                            input.seek(offset)
-                            val available = (input.length() - offset).coerceAtMost(256 * 1024).toInt()
-                            val bytes = ByteArray(available)
-                            input.readFully(bytes)
-                            offset += available
-                            pending += bytes.toString(Charsets.UTF_8).replace('\r', '\n')
-                        }
-                        val parts = pending.split('\n')
-                        pending = parts.last()
-                        for (raw in parts.dropLast(1)) {
-                            val line = sanitizeTerminalLine(raw)
-                            if (line.isNotBlank()) {
-                                collected.appendLine(line)
-                                if (collected.length > MAX_COLLECTED_OUTPUT) collected.delete(0, collected.length - MAX_COLLECTED_OUTPUT)
-                                onProgress(
-                                    RuntimeInstallProgress(
-                                        message = line,
-                                        fraction = fraction,
-                                        terminalLine = line,
-                                        indeterminate = true,
-                                        event = RuntimeInstallEvent.OUTPUT,
-                                    ),
-                                )
+                if (native != null) {
+                    native.forEachOutputLine(pollIntervalMs = 80L) { raw ->
+                        val line = sanitizeTerminalLine(raw)
+                        if (line.isNotBlank()) {
+                            collected.appendLine(line)
+                            if (collected.length > MAX_COLLECTED_OUTPUT) {
+                                collected.delete(0, collected.length - MAX_COLLECTED_OUTPUT)
                             }
+                            onProgress(
+                                RuntimeInstallProgress(
+                                    message = line,
+                                    fraction = fraction,
+                                    terminalLine = line,
+                                    indeterminate = true,
+                                    event = RuntimeInstallEvent.OUTPUT,
+                                ),
+                            )
                         }
-                    } else {
-                        delay(80)
+                        false
                     }
-                }
-                sanitizeTerminalLine(pending).takeIf(String::isNotBlank)?.let { line ->
-                    collected.appendLine(line)
-                    onProgress(RuntimeInstallProgress(line, fraction, terminalLine = line, indeterminate = true, event = RuntimeInstallEvent.OUTPUT))
+                } else {
+                    while (running.isAlive) delay(80)
                 }
             }
         } finally {
@@ -1856,10 +1845,7 @@ printf '%s\n' '{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decis
         }
         val temporary = File(destination.parentFile, "${destination.name}.part")
         var existing = temporary.takeIf(File::isFile)?.length() ?: 0L
-        val client = sharedHttpClient.newBuilder()
-            .connectTimeout(20, TimeUnit.SECONDS)
-            .readTimeout(120, TimeUnit.SECONDS)
-            .build()
+        val client = downloadHttpClient
         val requestBuilder = Request.Builder().url(url).get()
         if (existing > 0L) requestBuilder.header("Range", "bytes=$existing-")
         client.newCall(requestBuilder.build()).execute().use { response ->
@@ -1896,10 +1882,7 @@ printf '%s\n' '{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decis
     }
 
     private fun fetchText(url: String): String {
-        val client = sharedHttpClient.newBuilder()
-            .connectTimeout(15, TimeUnit.SECONDS)
-            .readTimeout(30, TimeUnit.SECONDS)
-            .build()
+        val client = metadataHttpClient
         val request = Request.Builder()
             .url(url)
             .header("Accept", "application/json")
@@ -2004,6 +1987,20 @@ printf '%s\n' '{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decis
         private const val MAX_TERMINAL_LINE = 500
         private const val MAX_COLLECTED_OUTPUT = 24_000
         private const val MAX_PROCESS_OUTPUT_BYTES = 256 * 1024
+        private const val INSTALLED_CACHE_TTL_MS = 2_000L
+        @Volatile private var lastInstalledCheckAtElapsedRealtime = 0L
+        @Volatile private var cachedInstalledResult = false
+        fun invalidateInstalledCache() {
+            lastInstalledCheckAtElapsedRealtime = 0L
+        }
+        private val downloadHttpClient = sharedHttpClient.newBuilder()
+            .connectTimeout(20, TimeUnit.SECONDS)
+            .readTimeout(120, TimeUnit.SECONDS)
+            .build()
+        private val metadataHttpClient = sharedHttpClient.newBuilder()
+            .connectTimeout(15, TimeUnit.SECONDS)
+            .readTimeout(30, TimeUnit.SECONDS)
+            .build()
         private val ANSI_ESCAPE = Regex("\\u001B(?:\\[[0-?]*[ -/]*[@-~]|\\][^\\u0007]*(?:\\u0007|\\u001B\\\\))")
     }
 }

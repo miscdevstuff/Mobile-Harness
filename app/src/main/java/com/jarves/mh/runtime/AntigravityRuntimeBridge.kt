@@ -11,7 +11,6 @@ import com.jarves.mh.model.ProviderProfile
 import com.jarves.mh.model.RuntimeEvent
 import com.jarves.mh.model.ToolRequest
 import java.io.File
-import java.io.RandomAccessFile
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.Dispatchers
@@ -224,51 +223,28 @@ class AntigravityRuntimeBridge(
                     process.outputStream.write(request.toByteArray())
                     process.outputStream.flush()
                     process.outputStream.close()
-                    var offset = 0L
-                    val pending = StringBuilder()
+                    val native = process as? NativeSpawnProcess ?: error("Unsupported Antigravity process")
                     var reply: String? = null
-                    fun handleLine(line: String): Boolean {
+                    var lastLine = ""
+                    var done = false
+                    native.forEachOutputLine(pollIntervalMs = 80L) { rawLine ->
+                        val line = rawLine.trim()
+                        if (line.isNotEmpty()) lastLine = line
                         when (val event = AntigravityEventParser.parse(line)) {
                             is AntigravityParsedEvent.Text -> if (reply == null && event.value.isNotBlank()) reply = event.value
                             is AntigravityParsedEvent.Result -> {
                                 if (event.status.equals("SUCCESS", ignoreCase = true)) {
                                     if (reply == null && !event.response.isNullOrBlank()) reply = event.response
-                                    return true
+                                    done = true
+                                } else {
+                                    throw AntigravitySessionException(friendlyError(event.error ?: event.status))
                                 }
-                                throw AntigravitySessionException(friendlyError(event.error ?: event.status))
                             }
                             else -> Unit
                         }
-                        return false
+                        done
                     }
-                    var done = false
-                    while (!done && (process.isAlive || outputFile.length() > offset)) {
-                        val available = outputFile.length() - offset
-                        if (available <= 0) {
-                            delay(100)
-                            continue
-                        }
-                        val bytes = ByteArray(minOf(available, 16L * 1024).toInt())
-                        val count = RandomAccessFile(outputFile, "r").use { file ->
-                            file.seek(offset)
-                            file.read(bytes)
-                        }
-                        if (count <= 0) continue
-                        offset += count
-                        pending.append(bytes.decodeToString(0, count))
-                        var newline = pending.indexOf("\n")
-                        while (newline >= 0) {
-                            val line = pending.substring(0, newline).trimEnd('\r')
-                            pending.delete(0, newline + 1)
-                            if (handleLine(line)) {
-                                done = true
-                                break
-                            }
-                            newline = pending.indexOf("\n")
-                        }
-                    }
-                    pending.toString().trim().takeIf(String::isNotEmpty)?.let { if (!done) done = handleLine(it) }
-                    check(done) { friendlyError(pending.toString().takeLast(500).ifBlank { "Antigravity exited without answering" }) }
+                    check(done) { friendlyError(lastLine.takeLast(500).ifBlank { "Antigravity exited without answering" }) }
                     stopAfterTerminalResult(process)
                     reply?.trim().takeUnless { it.isNullOrEmpty() } ?: "ok"
                 } finally {
@@ -315,9 +291,7 @@ class AntigravityRuntimeBridge(
             startForegroundRuntime(projectSlug)
             pushForegroundProgress(R.string.rt_bridge_starting, agentDisplayName)
             val installed = installer.installedRuntime()
-            val workspace = checkpoints.ensureWorkspace(projectId)
-            checkpoints.createCheckpoint(projectId, workspace)
-            val before = checkpoints.snapshot(workspace)
+            val workspace = ensureWorkspace(projectId)
             val command = antigravityCommand(model(), effort(), conversationId(projectId))
             val process = installer.process(
                 installed.proot,
@@ -339,15 +313,38 @@ class AntigravityRuntimeBridge(
             process.outputStream.close()
 
             val native = process as? NativeSpawnProcess ?: error("Unsupported Antigravity process")
-            var offset = 0L
-            val pending = StringBuilder()
             var resultSeen = false
             var assistantTextSeen = false
             var activeToolName: String? = null
             var activeToolDetail = ""
             var activeToolStartedAtMillis = 0L
             var lastToolProgressAtMillis = 0L
-            suspend fun handleLine(line: String) {
+            var lastDiagnostic = ""
+            native.forEachOutputLine(
+                pollIntervalMs = 50L,
+                onIdleTick = {
+                    val now = System.currentTimeMillis()
+                    pushForegroundProgress(
+                        activeToolName?.let { name ->
+                            AppStrings.get(context, R.string.rt_bridge_running_tool, name, activeToolDetail)
+                        } ?: AppStrings.get(context, R.string.rt_bridge_working, agentDisplayName),
+                    )
+                    if (activeToolName == "Bash" && activeToolDetail.contains("gradle", ignoreCase = true) &&
+                        now - activeToolStartedAtMillis >= 10_000L && now - lastToolProgressAtMillis >= 10_000L
+                    ) {
+                        lastToolProgressAtMillis = now
+                        eventBus.emit(
+                            RuntimeEvent.ToolProgress(
+                                sessionId,
+                                "Bash",
+                                antigravityGradleProgress(activeToolDetail, now - activeToolStartedAtMillis),
+                            ),
+                        )
+                    }
+                },
+            ) { rawLine ->
+                val line = rawLine.trim()
+                if (line.isNotEmpty()) lastDiagnostic = line
                 when (val event = AntigravityEventParser.parse(line)) {
                     is AntigravityParsedEvent.Initialized -> saveConversationId(projectId, event.conversationId)
                     is AntigravityParsedEvent.Text -> {
@@ -380,58 +377,16 @@ class AntigravityRuntimeBridge(
                     }
                     null -> Unit
                 }
-            }
-            outputLoop@ while (process.isAlive || native.outputFile.length() > offset) {
-                val available = native.outputFile.length() - offset
-                if (available <= 0) {
-                    val now = System.currentTimeMillis()
-                    pushForegroundProgress(
-                        activeToolName?.let { name ->
-                            AppStrings.get(context, R.string.rt_bridge_running_tool, name, activeToolDetail)
-                        } ?: AppStrings.get(context, R.string.rt_bridge_working, agentDisplayName),
-                    )
-                    if (activeToolName == "Bash" && activeToolDetail.contains("gradle", ignoreCase = true) &&
-                        now - activeToolStartedAtMillis >= 10_000L && now - lastToolProgressAtMillis >= 10_000L
-                    ) {
-                        lastToolProgressAtMillis = now
-                        eventBus.emit(
-                            RuntimeEvent.ToolProgress(
-                                sessionId,
-                                "Bash",
-                                antigravityGradleProgress(activeToolDetail, now - activeToolStartedAtMillis),
-                            ),
-                        )
-                    }
-                    delay(50)
-                    continue
-                }
-                val bytes = ByteArray(minOf(available, 16L * 1024).toInt())
-                val count = RandomAccessFile(native.outputFile, "r").use { file ->
-                    file.seek(offset)
-                    file.read(bytes)
-                }
-                if (count <= 0) continue
-                offset += count
-                pending.append(bytes.decodeToString(0, count))
-                var newline = pending.indexOf("\n")
-                while (newline >= 0) {
-                    val line = pending.substring(0, newline).trimEnd('\r')
-                    pending.delete(0, newline + 1)
-                    handleLine(line)
-                    if (resultSeen) break@outputLoop
-                    newline = pending.indexOf("\n")
-                }
+                resultSeen
             }
             if (resultSeen) {
                 stopAfterTerminalResult(process)
             } else {
-                pending.toString().trim().takeIf(String::isNotEmpty)?.let { handleLine(it) }
                 val exit = process.waitFor()
                 check(exit == 0 && resultSeen) {
-                    friendlyError(pending.toString().takeLast(1_000).ifBlank { "Antigravity exited with code $exit" })
+                    friendlyError(lastDiagnostic.takeLast(1_000).ifBlank { "Antigravity exited with code $exit" })
                 }
             }
-            recordWorkspaceChanges(sessionId, projectId, workspace, before)
             emitCompletedOnce(
                 sessionId,
                 AppStrings.get(context, R.string.rt_bridge_finished_in, agentDisplayName, projectSlug),

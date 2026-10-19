@@ -96,10 +96,15 @@ abstract class BaseRuntimeBridge(
     private val progressIntervalMs: Long = DEFAULT_FOREGROUND_PROGRESS_INTERVAL_MS,
 ) : RuntimeBridge {
     protected val installer = RuntimeInstaller(context)
-    protected val checkpoints = WorkspaceCheckpoints(context.filesDir, context)
+    private val projectRoots = ConcurrentHashMap<String, String>()
     protected val eventBus = MutableSharedFlow<RuntimeEvent>(extraBufferCapacity = 64)
     override val events: Flow<RuntimeEvent> = eventBus
     protected val finishedSessions = ConcurrentHashMap.newKeySet<String>()
+
+    init {
+        // Clean up any legacy per-turn project copies left behind by the retired WorkspaceCheckpoints store.
+        runCatching { File(context.filesDir, "checkpoints").takeIf(File::exists)?.deleteRecursively() }
+    }
 
     @Volatile protected var activeProcess: Process? = null
     @Volatile protected var activeSessionId: String? = null
@@ -140,7 +145,20 @@ abstract class BaseRuntimeBridge(
     }
 
     override fun configureProjectRoot(projectId: String, rootPath: String) {
-        checkpoints.configureProjectRoot(projectId, rootPath)
+        val normalized = rootPath.trim().trim('/')
+        require(normalized.isBlank() || (!normalized.contains("..") && !normalized.startsWith('/'))) {
+            "Unsafe project root"
+        }
+        projectRoots[projectId] = normalized
+    }
+
+    protected fun ensureWorkspace(projectId: String): File {
+        val base = File(context.filesDir, "workspaces/$projectId").apply { mkdirs() }.canonicalFile
+        val rootPath = projectRoots[projectId].orEmpty()
+        if (rootPath.isBlank()) return base
+        val selected = File(base, rootPath).canonicalFile
+        require(selected.toPath().startsWith(base.toPath())) { "Unsafe project root" }
+        return selected.apply { mkdirs() }
     }
 
     override suspend fun respondToApproval(request: ToolRequest, approved: Boolean) = Unit
@@ -159,85 +177,15 @@ abstract class BaseRuntimeBridge(
         activeSessionId?.let { stopSession(it) }
     }
 
-    override suspend fun undoLastChanges(projectId: String): Boolean = withContext(Dispatchers.IO) {
-        val checkpoint = checkpoints.checkpointDir(projectId)
-        val backup = File(checkpoint, "project")
-        if (!backup.isDirectory || !File(checkpoint, "changes.json").isFile) return@withContext false
-        val workspace = checkpoints.ensureWorkspace(projectId)
-        val paths = checkpoints.readChangedPaths(projectId).filterNot(checkpoints::isInternalRuntimePath)
-        if (paths.isEmpty()) return@withContext false
-        paths.forEach { path ->
-            val target = checkpoints.safeWorkspaceFile(workspace, path)
-            val original = checkpoints.safeWorkspaceFile(backup, path)
-            if (original.isFile) {
-                target.parentFile?.mkdirs()
-                original.copyTo(target, overwrite = true)
-            } else if (target.isFile || target.exists()) {
-                target.deleteRecursively()
-            }
-        }
-        checkpoint.deleteRecursively()
-        true
-    }
+    override suspend fun undoLastChanges(projectId: String): Boolean = false
 
-    override suspend fun acceptLastChanges(projectId: String) = withContext(Dispatchers.IO) {
-        checkpoints.checkpointDir(projectId).deleteRecursively()
-        Unit
-    }
+    override suspend fun acceptLastChanges(projectId: String) = Unit
 
-    override suspend fun loadPendingChanges(projectId: String): List<ChangeItem> = withContext(Dispatchers.IO) {
-        val workspace = checkpoints.ensureWorkspace(projectId)
-        val paths = checkpoints.readChangedPaths(projectId).filterNot(checkpoints::isInternalRuntimePath)
-        if (paths.isEmpty()) emptyList() else checkpoints.buildChangeDetails(projectId, workspace, paths)
-    }
+    override suspend fun loadPendingChanges(projectId: String): List<ChangeItem> = emptyList()
 
-    override suspend fun undoFileChange(projectId: String, path: String): Boolean = withContext(Dispatchers.IO) {
-        if (checkpoints.isInternalRuntimePath(path) || path !in checkpoints.readChangedPaths(projectId)) return@withContext false
-        val workspace = checkpoints.ensureWorkspace(projectId)
-        val backup = File(checkpoints.checkpointDir(projectId), "project")
-        val target = checkpoints.safeWorkspaceFile(workspace, path)
-        val original = checkpoints.safeWorkspaceFile(backup, path)
-        if (original.isFile) {
-            target.parentFile?.mkdirs()
-            original.copyTo(target, overwrite = true)
-        } else if (target.isFile) {
-            target.delete()
-        }
-        checkpoints.removeChangedPath(projectId, path)
-        true
-    }
+    override suspend fun undoFileChange(projectId: String, path: String): Boolean = false
 
-    override suspend fun acceptFileChange(projectId: String, path: String): Boolean = withContext(Dispatchers.IO) {
-        if (checkpoints.isInternalRuntimePath(path) || path !in checkpoints.readChangedPaths(projectId)) return@withContext false
-        val workspace = checkpoints.ensureWorkspace(projectId)
-        val backup = File(checkpoints.checkpointDir(projectId), "project")
-        val current = checkpoints.safeWorkspaceFile(workspace, path)
-        val baseline = checkpoints.safeWorkspaceFile(backup, path)
-        if (current.isFile) {
-            baseline.parentFile?.mkdirs()
-            current.copyTo(baseline, overwrite = true)
-        } else if (baseline.isFile) {
-            baseline.delete()
-        }
-        checkpoints.removeChangedPath(projectId, path)
-        true
-    }
-
-    protected suspend fun recordWorkspaceChanges(
-        sessionId: String,
-        projectId: String,
-        workspace: File,
-        before: Map<String, String>,
-    ) {
-        val changed = checkpoints.changedFiles(workspace, before)
-        if (changed.isNotEmpty()) {
-            checkpoints.saveChangedPaths(projectId, changed)
-            val details = checkpoints.buildChangeDetails(projectId, workspace, checkpoints.readChangedPaths(projectId))
-            eventBus.emit(RuntimeEvent.FilesChanged(sessionId, details))
-        } else if (!File(checkpoints.checkpointDir(projectId), "changes.json").isFile) {
-            acceptLastChanges(projectId)
-        }
-    }
+    override suspend fun acceptFileChange(projectId: String, path: String): Boolean = false
 
     protected fun buildContextPrompt(
         currentPrompt: String,
