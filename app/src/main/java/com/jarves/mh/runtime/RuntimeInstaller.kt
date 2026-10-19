@@ -15,9 +15,10 @@ import java.io.RandomAccessFile
 import com.jarves.mh.network.sharedHttpClient
 import java.util.concurrent.TimeUnit
 import okhttp3.Request
+import com.jarves.mh.data.appJson
 import java.security.MessageDigest
-import java.util.zip.ZipInputStream
 import kotlinx.coroutines.delay
+import kotlinx.serialization.encodeToString
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withTimeout
 import kotlin.coroutines.coroutineContext
@@ -1166,52 +1167,6 @@ class RuntimeInstaller(private val context: Context) {
         return destination
     }
 
-    private suspend fun installZipAsset(
-        url: String,
-        checksum: String,
-        archiveName: String,
-        destination: File,
-        message: String,
-        from: Float,
-        to: Float,
-        onProgress: suspend (RuntimeInstallProgress) -> Unit,
-    ) {
-        downloads.mkdirs()
-        val archive = File(downloads, archiveName)
-        downloadVerified(url, archive, checksum) { downloaded, total ->
-            val ratio = if (total > 0) downloaded.toFloat() / total else 0f
-            onProgress(RuntimeInstallProgress(message, from + ratio * (to - from), downloaded, total.takeIf { it > 0 }))
-        }
-        onProgress(RuntimeInstallProgress(str(R.string.rt_install_installing_named, archiveName.removeSuffix(".zip")), to, indeterminate = true))
-        val staging = File(destination.parentFile, "${destination.name}.installing")
-        staging.deleteRecursively()
-        staging.mkdirs()
-        extractZipArchive(archive, staging)
-        destination.deleteRecursively()
-        check(staging.renameTo(destination)) { "Could not activate ${destination.name}" }
-        archive.delete()
-    }
-
-    private fun extractZipArchive(archive: File, destination: File) {
-        ZipInputStream(BufferedInputStream(archive.inputStream())).use { zip ->
-            var entry = zip.nextEntry
-            while (entry != null) {
-                val name = entry.name.removePrefix("./").trimStart('/')
-                if (name.isNotBlank()) {
-                    val target = safeChild(destination, name)
-                    if (entry.isDirectory) {
-                        target.mkdirs()
-                    } else {
-                        target.parentFile?.mkdirs()
-                        FileOutputStream(target).use { output -> zip.copyTo(output) }
-                    }
-                }
-                zip.closeEntry()
-                entry = zip.nextEntry
-            }
-        }
-    }
-
     private fun makeAndroidToolsExecutable(androidHome: File, gradleHome: File) {
         val buildTools = File(androidHome, "build-tools/35.0.0")
         listOf("aapt", "aapt2", "aidl", "apksigner", "d8", "dexdump", "split-select", "zipalign")
@@ -1316,10 +1271,10 @@ class RuntimeInstaller(private val context: Context) {
     private fun readDevStackState(): MutableMap<String, Boolean> {
         if (!devStacksFile.isFile) return mutableMapOf()
         return runCatching {
-            val obj = JSONObject(devStacksFile.readText())
+            val decoded = appJson.decodeFromString<Map<String, Boolean>>(devStacksFile.readText())
             mutableMapOf<String, Boolean>().apply {
                 DevStack.entries.forEach { stack ->
-                    if (obj.has(stack.name)) put(stack.name, obj.optBoolean(stack.name))
+                    decoded[stack.name]?.let { put(stack.name, it) }
                 }
             }
         }.getOrDefault(mutableMapOf())
@@ -1327,9 +1282,7 @@ class RuntimeInstaller(private val context: Context) {
 
     private fun writeDevStackState(state: Map<String, Boolean>) {
         devStacksFile.parentFile?.mkdirs()
-        val obj = JSONObject()
-        state.forEach { (name, value) -> obj.put(name, value) }
-        devStacksFile.writeText(obj.toString())
+        devStacksFile.writeText(appJson.encodeToString(state))
     }
 
     private suspend fun installNodeIfNeeded(
@@ -1821,12 +1774,29 @@ printf '%s\n' '{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decis
         File(rootfs, "etc/resolv.conf").writeText(servers.joinToString("\n") { "nameserver $it" } + "\n")
     }
 
-    private fun extractRootfs(archive: File, destination: File) {
+    private fun extractZstdTar(archive: File, destination: File) {
+        TarArchiveInputStream(
+            ZstdCompressorInputStream(BufferedInputStream(archive.inputStream())),
+        ).use { tar -> extractTarStream(tar, destination) }
+    }
+
+    private fun extractNodeArchive(archive: File, destination: File) {
+        TarArchiveInputStream(
+            GzipCompressorInputStream(BufferedInputStream(archive.inputStream())),
+        ).use { tar -> extractTarStream(tar, destination, stripLeadingDirectory = true) }
+    }
+
+    private fun extractTarStream(
+        tar: TarArchiveInputStream,
+        destination: File,
+        stripLeadingDirectory: Boolean = false,
+    ) {
         val deferredLinks = mutableListOf<Pair<File, File>>()
-        TarArchiveInputStream(GzipCompressorInputStream(BufferedInputStream(archive.inputStream()))).use { tar ->
-            var entry: TarArchiveEntry? = tar.nextEntry
-            while (entry != null) {
-                val cleanName = entry.name.removePrefix("./")
+        var entry: TarArchiveEntry? = tar.nextEntry
+        while (entry != null) {
+            val rawName = entry.name.removePrefix("./")
+            val cleanName = if (stripLeadingDirectory) rawName.substringAfter('/', "") else rawName
+            if (cleanName.isNotBlank()) {
                 val target = safeChild(destination, cleanName)
                 when {
                     entry.isDirectory -> target.mkdirs()
@@ -1836,8 +1806,10 @@ printf '%s\n' '{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decis
                         Os.symlink(entry.linkName, target.absolutePath)
                     }
                     entry.isLink -> {
+                        val rawLink = entry.linkName.removePrefix("./")
+                        val cleanLink = if (stripLeadingDirectory) rawLink.substringAfter('/', "") else rawLink
+                        val linkTarget = safeChild(destination, cleanLink)
                         target.parentFile?.mkdirs()
-                        val linkTarget = safeChild(destination, entry.linkName.removePrefix("./"))
                         if (linkTarget.exists()) {
                             linkTarget.inputStream().use { input -> FileOutputStream(target).use { input.copyTo(it) } }
                         } else {
@@ -1850,98 +1822,11 @@ printf '%s\n' '{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decis
                         runCatching { Os.chmod(target.absolutePath, entry.mode and 0b111111111) }
                     }
                 }
-                entry = tar.nextEntry
             }
+            entry = tar.nextEntry
         }
         deferredLinks.forEach { (target, linkTarget) ->
             require(linkTarget.isFile) { "Archive hard-link target is missing" }
-            target.parentFile?.mkdirs()
-            linkTarget.inputStream().use { input -> FileOutputStream(target).use { input.copyTo(it) } }
-            runCatching { Os.chmod(target.absolutePath, android.system.Os.stat(linkTarget.absolutePath).st_mode) }
-        }
-    }
-
-    private fun extractZstdTar(archive: File, destination: File) {
-        val deferredLinks = mutableListOf<Pair<File, File>>()
-        TarArchiveInputStream(
-            ZstdCompressorInputStream(BufferedInputStream(archive.inputStream())),
-        ).use { tar ->
-            var entry: TarArchiveEntry? = tar.nextEntry
-            while (entry != null) {
-                val cleanName = entry.name.removePrefix("./")
-                if (cleanName.isNotBlank()) {
-                    val target = safeChild(destination, cleanName)
-                    when {
-                        entry.isDirectory -> target.mkdirs()
-                        entry.isSymbolicLink -> {
-                            target.parentFile?.mkdirs()
-                            if (target.exists() || java.nio.file.Files.isSymbolicLink(target.toPath())) target.delete()
-                            Os.symlink(entry.linkName, target.absolutePath)
-                        }
-                        entry.isLink -> {
-                            target.parentFile?.mkdirs()
-                            val linkTarget = safeChild(destination, entry.linkName.removePrefix("./"))
-                            if (linkTarget.exists()) {
-                                linkTarget.inputStream().use { input -> FileOutputStream(target).use { input.copyTo(it) } }
-                            } else {
-                                deferredLinks += target to linkTarget
-                            }
-                        }
-                        entry.isFile -> {
-                            target.parentFile?.mkdirs()
-                            FileOutputStream(target).use { output -> tar.copyTo(output) }
-                            runCatching { Os.chmod(target.absolutePath, entry.mode and 0b111111111) }
-                        }
-                    }
-                }
-                entry = tar.nextEntry
-            }
-        }
-        deferredLinks.forEach { (target, linkTarget) ->
-            require(linkTarget.isFile) { "Archive hard-link target is missing" }
-            target.parentFile?.mkdirs()
-            linkTarget.inputStream().use { input -> FileOutputStream(target).use { input.copyTo(it) } }
-            runCatching { Os.chmod(target.absolutePath, android.system.Os.stat(linkTarget.absolutePath).st_mode) }
-        }
-    }
-
-    private fun extractNodeArchive(archive: File, destination: File) {
-        val deferredLinks = mutableListOf<Pair<File, File>>()
-        TarArchiveInputStream(GzipCompressorInputStream(BufferedInputStream(archive.inputStream()))).use { tar ->
-            var entry: TarArchiveEntry? = tar.nextEntry
-            while (entry != null) {
-                val relative = entry.name.removePrefix("./").substringAfter('/', "")
-                if (relative.isNotBlank()) {
-                    val target = safeChild(destination, relative)
-                    when {
-                        entry.isDirectory -> target.mkdirs()
-                        entry.isSymbolicLink -> {
-                            target.parentFile?.mkdirs()
-                            if (target.exists() || java.nio.file.Files.isSymbolicLink(target.toPath())) target.delete()
-                            Os.symlink(entry.linkName, target.absolutePath)
-                        }
-                        entry.isLink -> {
-                            val relativeLink = entry.linkName.removePrefix("./").substringAfter('/', "")
-                            val linkTarget = safeChild(destination, relativeLink)
-                            target.parentFile?.mkdirs()
-                            if (linkTarget.exists()) {
-                                linkTarget.inputStream().use { input -> FileOutputStream(target).use { input.copyTo(it) } }
-                            } else {
-                                deferredLinks += target to linkTarget
-                            }
-                        }
-                        entry.isFile -> {
-                            target.parentFile?.mkdirs()
-                            FileOutputStream(target).use { output -> tar.copyTo(output) }
-                            runCatching { Os.chmod(target.absolutePath, entry.mode and 0b111111111) }
-                        }
-                    }
-                }
-                entry = tar.nextEntry
-            }
-        }
-        deferredLinks.forEach { (target, linkTarget) ->
-            require(linkTarget.isFile) { "Node.js archive hard-link target is missing" }
             target.parentFile?.mkdirs()
             linkTarget.inputStream().use { input -> FileOutputStream(target).use { input.copyTo(it) } }
             runCatching { Os.chmod(target.absolutePath, android.system.Os.stat(linkTarget.absolutePath).st_mode) }
@@ -2047,30 +1932,18 @@ printf '%s\n' '{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decis
         private const val OPENCODE_HOME_BIN_REL_PATH = "root/.opencode/bin/opencode"
         const val GITHUB_CLI_GUEST_PATH = "/root/.local/bin/gh"
         private const val AGY_VERSION = "1.1.27"
-        private const val AGY_RELEASE_URL = "https://storage.googleapis.com/antigravity-public/antigravity-cli/1.1.27-5211191891591168/linux-arm/cli_linux_arm64.tar.gz"
-        private const val AGY_RELEASE_SHA512 = "ed45f6930785aa4b42f14e07ace1c9d91a94fb76e760f54acbd7d3d3951e1f957fd456a0dae2a3124dd9a3b689bf7afb7c9303a3e4ba95037fc10063424d9bf9"
         private const val GITHUB_CLI_VERSION = "2.100.0"
         private const val GITHUB_CLI_RELEASE_URL = "https://github.com/cli/cli/releases/download/v2.100.0/gh_2.100.0_linux_arm64.tar.gz"
         private const val GITHUB_CLI_RELEASE_SHA256 = "ea4e7a581a32ccad6cc7923cb1576ac5859ba4b9a16ab22eb8f8a96e78e2e961"
         private const val LEGACY_README = "# Pocket Dev project\n\nThis project is managed locally on Android.\n"
         private const val LEGACY_INDEX = "<!doctype html><title>Pocket Dev</title><h1>Hello from Android</h1>\n"
         private const val ROOTFS_VERSION = "ubuntu-20.04.5-arm64"
-        private const val ROOTFS_FILE = "ubuntu-base-20.04.5-base-arm64.tar.gz"
-        private const val ROOTFS_URL = "https://cdimage.ubuntu.com/ubuntu-base/releases/20.04/release/$ROOTFS_FILE"
-        private const val ROOTFS_SHA256 = "f9b999afb4c4b10193087ea8c11be36d688f19e609b05179b571f29357954b52"
         private const val NODE_VERSION = "v24.19.0"
         private const val LANGUAGE_TOOLS_VERSION = "node-v24.19.0-python3-v1"
         private const val CORE_TOOLS_VERSION = "core-bundle-2026.09.5"
         private const val LEGACY_CORE_TOOLS_VERSION = "core-bundle-2026.09.4"
         private const val SYSTEM_UPGRADE_VERSION = "ubuntu-maintenance-v1"
         private const val ANDROID_TOOLS_VERSION = "sdk36-build-tools35-gradle8.14.3-maven-2026.09"
-        private const val ANDROID_ASSET_BASE = "https://appdevforall.org/dev-assets/debug"
-        private const val ANDROID_SDK_URL = "$ANDROID_ASSET_BASE/android-sdk-arm64-v8a.zip"
-        private const val ANDROID_SDK_SHA256 = "bfe5bc940a7ede14735817a40962256666ce4152b9f3135f34a4ab9bccb87c3f"
-        private const val ANDROID_GRADLE_URL = "$ANDROID_ASSET_BASE/gradle-8.14.3-bin.zip"
-        private const val ANDROID_GRADLE_SHA256 = "8e228b640319a7c739c0a93d002facdeb08e8f3ba394d57d74ee355a5e93072c"
-        private const val ANDROID_MAVEN_URL = "$ANDROID_ASSET_BASE/localMvnRepository.zip"
-        private const val ANDROID_MAVEN_SHA256 = "3ba89892b43377d60743568d1b9004f172c2eab75dac059064f82dec497819f9"
         private const val ANDROID_AAPT2_PROPERTY = "android.aapt2FromMavenOverride"
         private const val GRADLE_JVMARGS_PROPERTY = "org.gradle.jvmargs"
         private const val GRADLE_WORKERS_PROPERTY = "org.gradle.workers.max"

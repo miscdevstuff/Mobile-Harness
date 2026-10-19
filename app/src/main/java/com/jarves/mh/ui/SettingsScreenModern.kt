@@ -14,7 +14,6 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -23,13 +22,11 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.OpenInNew
-import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.DeleteSweep
@@ -40,23 +37,17 @@ import androidx.compose.material.icons.filled.Memory
 import androidx.compose.material.icons.filled.PhoneAndroid
 import androidx.compose.material.icons.filled.PrivacyTip
 import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material.icons.filled.SmartToy
 import androidx.compose.material.icons.filled.Terminal
 import androidx.compose.material.icons.filled.Tune
-import androidx.compose.material.icons.filled.Visibility
-import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
@@ -65,12 +56,10 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
-import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -78,37 +67,27 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalClipboardManager
-import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.input.PasswordVisualTransformation
-import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.jarves.mh.BuildConfig
 import com.jarves.mh.data.ApiKeyInfo
 import com.jarves.mh.model.AgentKind
-import com.jarves.mh.model.DEEPSEEK_HARNESS_PROVIDERS
-import com.jarves.mh.model.DSH_PROTOCOL_PROVIDERS
 import com.jarves.mh.model.DevStack
 import com.jarves.mh.model.ProviderKind
 import com.jarves.mh.model.ProviderProfile
-import com.jarves.mh.model.isKeylessAllowed
-import com.jarves.mh.model.providersForAgent
 import com.jarves.mh.network.ConnectionValidation
 import com.jarves.mh.network.DiscoveredModel
 import com.jarves.mh.network.ModelDiscoveryResult
 import androidx.compose.material.icons.filled.Language
 import androidx.compose.ui.res.stringResource
 import com.jarves.mh.R
-import com.jarves.mh.runtime.AntigravityAuthStatus
 import com.jarves.mh.ui.theme.AppLanguage
 import com.jarves.mh.ui.theme.AppThemeMode
 import com.jarves.mh.ui.theme.PocketOrange
-import kotlinx.coroutines.launch
 
 private enum class SettingsSection { APPEARANCE, LANGUAGE, TOOLS, RUNTIME, DIAGNOSTICS, UPDATE_CHANNEL }
 
@@ -679,347 +658,6 @@ private fun SettingsAccordion(
                 }
             }
         }
-    }
-}
-
-@Composable
-private fun AntigravityConnectionSettings(
-    state: AppUiState,
-    code: String,
-    onCode: (String) -> Unit,
-    onStartLogin: () -> Unit,
-    onSubmitCode: () -> Unit,
-    onLogout: () -> Unit,
-    onRefreshModels: () -> Unit,
-    onSetModel: (String) -> Unit,
-    onSetEffort: (String) -> Unit,
-) {
-    val clipboard = LocalClipboardManager.current
-    val auth = state.antigravityAuth
-    Surface(
-        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
-        shape = RoundedCornerShape(14.dp),
-    ) {
-        Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Text(stringResource(R.string.st_official_antigravity_cli), fontWeight = FontWeight.SemiBold)
-            Text(
-                auth.message ?: if (auth.status == AntigravityAuthStatus.SIGNED_IN) {
-                    auth.accountEmail?.let { stringResource(R.string.st_connected_as, it) } ?: stringResource(R.string.st_google_account_connected)
-                } else stringResource(R.string.st_sign_in_google_flow),
-                fontSize = 12.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            when (auth.status) {
-                AntigravityAuthStatus.SIGNED_IN -> OutlinedButton(onClick = onLogout, modifier = Modifier.fillMaxWidth()) {
-                    Text(stringResource(R.string.st_log_out_antigravity))
-                }
-                AntigravityAuthStatus.STARTING, AntigravityAuthStatus.COMPLETING -> {
-                    LinearProgressIndicator(Modifier.fillMaxWidth())
-                }
-                AntigravityAuthStatus.AWAITING_CODE -> {
-                    auth.authorizationUrl?.let { url ->
-                        OutlinedButton(
-                            onClick = { clipboard.setText(AnnotatedString(url)) },
-                            modifier = Modifier.fillMaxWidth(),
-                        ) { Text(stringResource(R.string.st_copy_google_signin_url)) }
-                    }
-                    OutlinedTextField(
-                        value = code,
-                        onValueChange = onCode,
-                        label = { Text(stringResource(R.string.st_one_time_auth_code)) },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                    Button(onClick = onSubmitCode, enabled = code.isNotBlank(), modifier = Modifier.fillMaxWidth()) {
-                        Text(stringResource(R.string.st_complete_signin))
-                    }
-                }
-                AntigravityAuthStatus.SIGNED_OUT, AntigravityAuthStatus.ERROR -> Button(
-                    onClick = onStartLogin,
-                    modifier = Modifier.fillMaxWidth(),
-                ) { Text(if (auth.status == AntigravityAuthStatus.ERROR) stringResource(R.string.st_reconnect_google) else stringResource(R.string.agent_google_signin)) }
-            }
-        }
-    }
-
-    if (auth.status == AntigravityAuthStatus.SIGNED_IN) {
-        Text(stringResource(R.string.st_model), fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-        OutlinedTextField(
-            value = state.antigravityModel,
-            onValueChange = onSetModel,
-            label = { Text(stringResource(R.string.st_antigravity_model_id)) },
-            singleLine = true,
-            modifier = Modifier.fillMaxWidth(),
-        )
-        OutlinedButton(
-            onClick = onRefreshModels,
-            enabled = !state.antigravityModelsLoading,
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            if (state.antigravityModelsLoading) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
-            else Icon(Icons.Default.Refresh, null, Modifier.size(18.dp))
-            Spacer(Modifier.width(7.dp))
-            Text(stringResource(R.string.provider_refresh_models))
-        }
-        state.antigravityModels.forEach { model ->
-            Row(
-                Modifier.fillMaxWidth().clickable { onSetModel(model) }.padding(vertical = 7.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(model, Modifier.weight(1f), fontSize = 12.sp)
-                SelectionDot(state.antigravityModel == model)
-            }
-        }
-        Text(stringResource(R.string.st_reasoning_effort), fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            listOf("low", "medium", "high").forEach { effort ->
-                OutlinedButton(onClick = { onSetEffort(effort) }, modifier = Modifier.weight(1f)) {
-                    Text(
-                        when (effort) {
-                            "low" -> stringResource(R.string.st_effort_low)
-                            "medium" -> stringResource(R.string.st_effort_medium)
-                            "high" -> stringResource(R.string.st_effort_high)
-                            else -> effort
-                        },
-                    )
-                }
-            }
-        }
-    }
-
-    Surface(color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.55f), shape = RoundedCornerShape(12.dp)) {
-        Text(
-            stringResource(R.string.st_antigravity_approval_warning),
-            Modifier.fillMaxWidth().padding(12.dp),
-            color = MaterialTheme.colorScheme.onErrorContainer,
-            fontSize = 11.sp,
-        )
-    }
-}
-
-@Composable
-private fun ConnectionSettings(
-    state: AppUiState,
-    selectedKind: ProviderKind,
-    baseUrl: String,
-    model: String,
-    dshApi: String,
-    apiKey: String,
-    models: List<DiscoveredModel>,
-    isDiscovering: Boolean,
-    isValidating: Boolean,
-    status: String?,
-    statusOk: Boolean,
-    savedKeys: List<ApiKeyInfo>,
-    newKeyName: String,
-    newApiKey: String,
-    newKeyVisible: Boolean,
-    onPing: () -> Unit,
-    onProvider: (ProviderKind) -> Unit,
-    onBaseUrl: (String) -> Unit,
-    onModel: (String) -> Unit,
-    onDshApi: (String) -> Unit,
-    onNewKeyName: (String) -> Unit,
-    onNewApiKey: (String) -> Unit,
-    onToggleNewKey: () -> Unit,
-    onAddKey: () -> Unit,
-    onActivateKey: (String) -> Unit,
-    onRemoveKey: (String) -> Unit,
-    onModels: () -> Unit,
-    onValidate: () -> Unit,
-) {
-    val visibleKinds = remember(state.agentKind) { providersForAgent(state.agentKind) }
-    var providerExpanded by rememberSaveable { mutableStateOf(false) }
-    var addKeyExpanded by rememberSaveable(savedKeys.isEmpty()) { mutableStateOf(savedKeys.isEmpty()) }
-    Surface(color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f), shape = RoundedCornerShape(14.dp)) {
-        Row(Modifier.fillMaxWidth().padding(13.dp), verticalAlignment = Alignment.CenterVertically) {
-            Box(Modifier.size(8.dp).background(
-                when (state.apiPingStatus) {
-                    ApiPingStatus.OK -> Color(0xFF58C9A3)
-                    ApiPingStatus.FAILED -> MaterialTheme.colorScheme.error
-                    ApiPingStatus.PINGING -> PocketOrange
-                    ApiPingStatus.IDLE -> MaterialTheme.colorScheme.onSurfaceVariant
-                }, CircleShape,
-            ))
-            Spacer(Modifier.width(9.dp))
-            Column(Modifier.weight(1f)) {
-                Text(stringResource(R.string.provider_active_connection), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Text(state.provider.model.ifBlank { stringResource(R.string.st_not_configured) }, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                state.activeApiKeyName?.let { name ->
-                    Text(stringResource(R.string.st_key_label, name), fontSize = 11.sp, color = PocketOrange, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                }
-                state.apiPingMessage?.let {
-                    Text(it, fontSize = 11.sp, color = if (state.apiPingStatus == ApiPingStatus.FAILED) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                }
-            }
-            OutlinedButton(onClick = onPing, enabled = state.apiPingStatus != ApiPingStatus.PINGING, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)) {
-                Text(if (state.apiPingStatus == ApiPingStatus.PINGING) stringResource(R.string.provider_testing) else stringResource(R.string.action_test))
-            }
-        }
-    }
-
-    Text(stringResource(R.string.provider_label), fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurfaceVariant)
-    Surface(
-        modifier = Modifier.fillMaxWidth().clickable { providerExpanded = !providerExpanded },
-        shape = RoundedCornerShape(14.dp),
-        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
-        border = BorderStroke(1.dp, if (providerExpanded) PocketOrange else MaterialTheme.colorScheme.outlineVariant),
-    ) {
-        Row(Modifier.padding(13.dp), verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) {
-                Text(selectedKind.localizedTitle(), fontWeight = FontWeight.SemiBold)
-                Text(selectedKind.localizedSubtitle(), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
-            }
-            Icon(if (providerExpanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown, stringResource(R.string.st_choose_provider))
-        }
-    }
-    AnimatedVisibility(providerExpanded) {
-        Surface(shape = RoundedCornerShape(14.dp), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.25f)) {
-            Column {
-                visibleKinds.forEachIndexed { index, kind ->
-                Row(
-                    Modifier.fillMaxWidth().clickable {
-                        onProvider(kind)
-                        providerExpanded = false
-                    }.padding(horizontal = 13.dp, vertical = 11.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Column(Modifier.weight(1f)) {
-                        Text(kind.localizedTitle(), fontWeight = FontWeight.Medium)
-                        Text(kind.localizedSubtitle(), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
-                    }
-                    SelectionDot(selectedKind == kind)
-                }
-                if (index != visibleKinds.lastIndex) HorizontalDivider(Modifier.padding(start = 13.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f))
-            }
-            }
-        }
-    }
-
-    if (selectedKind.fixedBaseUrl) {
-        Text(
-            selectedKind.defaultBaseUrl,
-            fontSize = 11.sp,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
-    } else {
-        OutlinedTextField(baseUrl, onBaseUrl, label = { Text(stringResource(R.string.provider_base_url)) }, singleLine = true, modifier = Modifier.fillMaxWidth())
-    }
-    if (state.agentKind == AgentKind.DEEPSEEK_HARNESS && selectedKind in DSH_PROTOCOL_PROVIDERS) {
-        Text(stringResource(R.string.provider_gateway_protocol), fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Surface(shape = RoundedCornerShape(14.dp), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)) {
-            Column {
-                listOf("anthropic-messages", "openai-completions", "openai-responses").forEach { option ->
-                    Row(
-                        Modifier.fillMaxWidth().clickable { onDshApi(option) }.padding(horizontal = 13.dp, vertical = 11.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Text(option, Modifier.weight(1f), fontSize = 13.sp)
-                        SelectionDot(dshApi == option)
-                    }
-                }
-            }
-        }
-    }
-    Text(stringResource(R.string.st_model), fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurfaceVariant)
-    OutlinedTextField(model, onModel, label = { Text(stringResource(R.string.provider_model_id)) }, singleLine = true, modifier = Modifier.fillMaxWidth())
-    OutlinedButton(
-        onClick = onModels,
-        enabled = baseUrl.isNotBlank() && (apiKey.isNotBlank() || selectedKind.isKeylessAllowed(model)) && !isDiscovering,
-        modifier = Modifier.fillMaxWidth().height(50.dp),
-    ) {
-        if (isDiscovering) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
-        else Icon(if (models.isEmpty()) Icons.Default.Search else Icons.Default.KeyboardArrowDown, null, Modifier.size(18.dp))
-        Spacer(Modifier.width(7.dp))
-        Text(if (models.isEmpty()) stringResource(R.string.provider_find_models) else stringResource(R.string.provider_available_models_count, models.size))
-    }
-    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        Column(Modifier.weight(1f)) {
-            Text(stringResource(R.string.provider_api_keys), fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Text(stringResource(R.string.st_saved_keys_failover, savedKeys.size), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-        OutlinedButton(onClick = { addKeyExpanded = !addKeyExpanded }) {
-            Text(if (addKeyExpanded) stringResource(R.string.action_cancel) else stringResource(R.string.provider_add_key))
-        }
-    }
-    if (savedKeys.isNotEmpty()) {
-        Text(stringResource(R.string.st_saved_api_keys), fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Surface(shape = RoundedCornerShape(14.dp), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)) {
-            Column {
-                savedKeys.forEachIndexed { index, key ->
-                    Row(
-                        Modifier.fillMaxWidth().clickable { onActivateKey(key.id) }.padding(start = 13.dp, top = 9.dp, bottom = 9.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Column(Modifier.weight(1f)) {
-                            Text(key.name, fontWeight = FontWeight.Medium)
-                            Text(
-                                if (key.isActive) stringResource(R.string.st_active_now_switch) else stringResource(R.string.st_tap_to_make_active),
-                                fontSize = 11.sp,
-                                color = if (key.isActive) PocketOrange else MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                        SelectionDot(key.isActive)
-                        IconButton(onClick = { onRemoveKey(key.id) }) {
-                            Icon(Icons.Default.DeleteSweep, stringResource(R.string.st_remove_named, key.name), Modifier.size(18.dp))
-                        }
-                    }
-                    if (index != savedKeys.lastIndex) HorizontalDivider(Modifier.padding(start = 13.dp))
-                }
-            }
-        }
-    }
-    AnimatedVisibility(addKeyExpanded) {
-        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            OutlinedTextField(
-                newKeyName,
-                onNewKeyName,
-                label = { Text(stringResource(R.string.provider_key_name)) },
-                placeholder = { Text(stringResource(R.string.st_key_name_placeholder)) },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth(),
-            )
-            OutlinedTextField(
-                newApiKey,
-                onNewApiKey,
-                label = { Text(stringResource(R.string.provider_api_key)) },
-                singleLine = true,
-                visualTransformation = if (newKeyVisible) VisualTransformation.None else PasswordVisualTransformation(),
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
-                trailingIcon = {
-                    IconButton(onClick = onToggleNewKey) {
-                        Icon(if (newKeyVisible) Icons.Default.VisibilityOff else Icons.Default.Visibility, stringResource(R.string.st_show_hide_new_key))
-                    }
-                },
-                modifier = Modifier.fillMaxWidth(),
-            )
-            Button(
-                onClick = {
-                    onAddKey()
-                    addKeyExpanded = false
-                },
-                enabled = newKeyName.isNotBlank() && newApiKey.isNotBlank(),
-                modifier = Modifier.fillMaxWidth().height(50.dp),
-            ) {
-                Text(stringResource(R.string.st_save_api_key))
-            }
-        }
-    }
-    if (status != null) {
-        Text(status, fontSize = 12.sp, color = if (statusOk) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.error)
-    }
-    Button(
-        onClick = onValidate,
-        enabled = baseUrl.isNotBlank() && model.isNotBlank() && (apiKey.isNotBlank() || selectedKind.isKeylessAllowed(model)) && !isDiscovering && !isValidating,
-        modifier = Modifier.fillMaxWidth().height(52.dp),
-    ) {
-        if (isValidating) {
-            CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
-            Spacer(Modifier.width(8.dp))
-        }
-        Text(if (isValidating) stringResource(R.string.st_checking_connection_plain) else stringResource(R.string.st_test_connection_and_save))
     }
 }
 
