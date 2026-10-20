@@ -12,7 +12,6 @@ import com.jarves.mh.model.ProviderProfile
 import com.jarves.mh.model.RuntimeEvent
 import com.jarves.mh.ui.AppStrings
 import java.io.File
-import java.io.RandomAccessFile
 import java.util.UUID
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
@@ -135,8 +134,6 @@ class DshRuntimeBridge(
             ?: error("Unsupported Android runtime process")
         val writer = process.outputStream.bufferedWriter()
         val parser = DshSdkProtocolParser(sessionId)
-        var outputOffset = 0L
-        val pendingOutput = StringBuilder()
         var promptSent = false
         var sawRunning = false
         var completed = false
@@ -145,7 +142,6 @@ class DshRuntimeBridge(
         var shutdownSentAt = 0L
         var forcedShutdown = false
         var inputClosed = false
-        var discardingOversizedLine = false
         var failure = ""
 
         fun send(method: String, id: Int, params: JSONObject? = null) {
@@ -246,7 +242,7 @@ class DshRuntimeBridge(
             }
         }
 
-        while (process.isAlive || nativeProcess.outputFile.length() > outputOffset) {
+        fun checkForcedShutdown() {
             if (
                 process.isAlive &&
                 !forcedShutdown &&
@@ -257,46 +253,25 @@ class DshRuntimeBridge(
                 forcedShutdown = true
                 process.destroyForcibly()
             }
-            val available = nativeProcess.outputFile.length() - outputOffset
-            if (available <= 0) {
-                delay(50)
-                continue
-            }
-            val bytes = ByteArray(minOf(available, 16L * 1024).toInt())
-            val count = RandomAccessFile(nativeProcess.outputFile, "r").use { file ->
-                file.seek(outputOffset)
-                file.read(bytes)
-            }
-            if (count <= 0) continue
-            outputOffset += count
-            var decoded = bytes.decodeToString(0, count)
-            if (discardingOversizedLine) {
-                val end = decoded.indexOf('\n')
-                if (end < 0) continue
-                decoded = decoded.substring(end + 1)
-                discardingOversizedLine = false
-            }
-            pendingOutput.append(decoded)
-            var newline = pendingOutput.indexOf("\n")
-            while (newline >= 0) {
-                val line = pendingOutput.substring(0, newline).trimEnd('\r')
-                pendingOutput.delete(0, newline + 1)
-                if (line.isNotBlank() && !parser.consumeDuplicateAssistantMessage(line)) {
-                    handle(parser.parseLine(line))
-                }
-                newline = pendingOutput.indexOf("\n")
-            }
-            if (pendingOutput.length > MAX_DSH_PROTOCOL_LINE_CHARS) {
-                val duplicate = parser.consumeDuplicateAssistantMessage(pendingOutput)
-                pendingOutput.clear()
-                discardingOversizedLine = true
+        }
+
+        nativeProcess.forEachOutputLine(
+            pollIntervalMs = 50L,
+            maxPendingChars = MAX_DSH_PROTOCOL_LINE_CHARS,
+            onIdleTick = { checkForcedShutdown() },
+            onOversizedLine = { oversized ->
+                val duplicate = parser.consumeDuplicateAssistantMessage(oversized)
                 if (!duplicate) {
                     handle(DshSdkProtocolEvent.Failed("DeepSeek Harness sent an oversized response"))
                 }
+            },
+        ) { rawLine ->
+            checkForcedShutdown()
+            val line = rawLine.trim()
+            if (line.isNotBlank() && !parser.consumeDuplicateAssistantMessage(line)) {
+                handle(parser.parseLine(line))
             }
-        }
-        pendingOutput.toString().trim().takeIf(String::isNotBlank)?.let {
-            if (!parser.consumeDuplicateAssistantMessage(it)) handle(parser.parseLine(it))
+            false
         }
         closeInput()
         return DshSdkRunResult(completed = completed, failure = failure)

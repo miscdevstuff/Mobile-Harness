@@ -394,6 +394,9 @@ fun PocketDevApp(viewModel: MainViewModel = viewModel()) {
         )
         state.activeProject != null && state.workspaceVisible -> WorkspaceScreen(
             state = state,
+            projectTerminalLiveOutputFlow = viewModel.projectTerminalLiveOutput,
+            androidBuildLogFlow = viewModel.androidBuildLog,
+            androidLogcatFlow = viewModel.androidLogcat,
             onBack = viewModel::closeProject,
             onSend = viewModel::sendPrompt,
             onStop = viewModel::stopTask,
@@ -2359,6 +2362,7 @@ private fun RootScreenHost(
                 )
                 RootScreen.SETTINGS -> SettingsScreen(
                     state = state,
+                    diagnosticsFlow = viewModel.diagnostics,
                     onSetThemeMode = viewModel::setThemeMode,
                     onSetLanguage = viewModel::setLanguage,
                     onClearTerminal = viewModel::clearTerminal,
@@ -4015,6 +4019,9 @@ private fun ReadOnlyProjectScreen(
 @Composable
 private fun WorkspaceScreen(
     state: AppUiState,
+    projectTerminalLiveOutputFlow: kotlinx.coroutines.flow.StateFlow<String>,
+    androidBuildLogFlow: kotlinx.coroutines.flow.StateFlow<String>,
+    androidLogcatFlow: kotlinx.coroutines.flow.StateFlow<com.jarves.mh.runtime.AndroidLogcatState>,
     onBack: () -> Unit,
     onSend: (String) -> Unit,
     onStop: () -> Unit,
@@ -4195,6 +4202,8 @@ private fun WorkspaceScreen(
     if (showAndroidBuild) {
         AndroidDashboardScreen(
             state = state,
+            androidBuildLogFlow = androidBuildLogFlow,
+            androidLogcatFlow = androidLogcatFlow,
             onClose = { onStopAndroidLogcat(); showAndroidBuild = false },
             onAction = requestAndroidAction,
             onCancelBuild = onCancelAndroidBuild,
@@ -4423,27 +4432,30 @@ private fun WorkspaceScreen(
                         saveCopyLauncher.launch(path.substringAfterLast('/'))
                     },
                 )
-                WorkspaceTab.TERMINAL -> TerminalScreen(
-                    lines = state.projectTerminalLines,
-                    isRunning = state.projectTerminalRunning,
-                    onRun = onTerminalRun,
-                    onInput = onTerminalInput,
-                    onInterrupt = onTerminalInterrupt,
-                    onClear = onTerminalClear,
-                    onToggleTheme = {},
-                    themeMode = state.themeMode,
-                    title = stringResource(R.string.workspace_project_terminal),
-                    subtitle = "${state.projectTerminalCwd} · Ubuntu PRoot",
-                    liveOutput = state.projectTerminalLiveOutput,
-                    currentCommand = state.projectTerminalCommand,
-                    commandDraft = state.projectTerminalDraft,
-                    onCommandDraftConsumed = onTerminalDraftConsumed,
-                    promptPath = state.projectTerminalCwd,
-                    onStop = onTerminalStop,
-                    showThemeAction = false,
-                    showQuickCommands = false,
-                    compactHeader = true,
-                )
+                WorkspaceTab.TERMINAL -> {
+                    val projectTerminalLiveOutput by projectTerminalLiveOutputFlow.collectAsStateWithLifecycle()
+                    TerminalScreen(
+                        lines = state.projectTerminalLines,
+                        isRunning = state.projectTerminalRunning,
+                        onRun = onTerminalRun,
+                        onInput = onTerminalInput,
+                        onInterrupt = onTerminalInterrupt,
+                        onClear = onTerminalClear,
+                        onToggleTheme = {},
+                        themeMode = state.themeMode,
+                        title = stringResource(R.string.workspace_project_terminal),
+                        subtitle = "${state.projectTerminalCwd} · Ubuntu PRoot",
+                        liveOutput = projectTerminalLiveOutput,
+                        currentCommand = state.projectTerminalCommand,
+                        commandDraft = state.projectTerminalDraft,
+                        onCommandDraftConsumed = onTerminalDraftConsumed,
+                        promptPath = state.projectTerminalCwd,
+                        onStop = onTerminalStop,
+                        showThemeAction = false,
+                        showQuickCommands = false,
+                        compactHeader = true,
+                    )
+                }
                 WorkspaceTab.PREVIEW -> PreviewTab(state.previewReady, state.previewUrl)
             }
         }
@@ -4529,6 +4541,8 @@ private fun androidStageLabel(stage: AndroidBuildStage): String = stringResource
 @Composable
 private fun AndroidDashboardScreen(
     state: AppUiState,
+    androidBuildLogFlow: kotlinx.coroutines.flow.StateFlow<String>,
+    androidLogcatFlow: kotlinx.coroutines.flow.StateFlow<com.jarves.mh.runtime.AndroidLogcatState>,
     onClose: () -> Unit,
     onAction: (AndroidAction) -> Unit,
     onCancelBuild: () -> Unit,
@@ -4647,6 +4661,7 @@ private fun AndroidDashboardScreen(
             when (section) {
                 AndroidDashboardSection.OVERVIEW -> ProfessionalAndroidOverview(
                     state = state,
+                    androidBuildLogFlow = androidBuildLogFlow,
                     liveElapsedSeconds = liveElapsedSeconds,
                     showRawLog = showRawLog,
                     onToggleRawLog = { showRawLog = !showRawLog },
@@ -4656,6 +4671,7 @@ private fun AndroidDashboardScreen(
                     onOpenIssue = onOpenIssue,
                 )
                 AndroidDashboardSection.BUILD -> {
+                    val androidBuildLog by androidBuildLogFlow.collectAsStateWithLifecycle()
                     LazyColumn(
                         Modifier.fillMaxSize(),
                         contentPadding = PaddingValues(16.dp),
@@ -4788,20 +4804,20 @@ private fun AndroidDashboardScreen(
                                 }
                             }
                         }
-                        if (state.androidBuildLog.isNotBlank()) {
+                        if (androidBuildLog.isNotBlank()) {
                             item {
                                 Row(verticalAlignment = Alignment.CenterVertically) {
                                     TextButton(onClick = { showRawLog = !showRawLog }, modifier = Modifier.weight(1f)) {
                                         Text(stringResource(if (showRawLog) R.string.hide_build_details else R.string.show_build_details))
                                     }
-                                    TextButton(onClick = { clipboard.setText(AnnotatedString(state.androidBuildLog)) }) {
+                                    TextButton(onClick = { clipboard.setText(AnnotatedString(androidBuildLog)) }) {
                                         Icon(Icons.Default.ContentCopy, null); Spacer(Modifier.width(4.dp)); Text(stringResource(R.string.copy_log))
                                     }
                                 }
                                 if (showRawLog) Surface(color = Color(0xFF11141A), shape = RoundedCornerShape(12.dp)) {
                                     SelectionContainer {
                                         Text(
-                                            state.androidBuildLog,
+                                            androidBuildLog,
                                             Modifier.fillMaxWidth().heightIn(max = 360.dp).verticalScroll(rememberScrollState()).padding(12.dp),
                                             color = Color(0xFFD7DEE9), fontFamily = FontFamily.Monospace, fontSize = 10.sp, lineHeight = 14.sp,
                                         )
@@ -4812,7 +4828,7 @@ private fun AndroidDashboardScreen(
                     }
                 }
                 AndroidDashboardSection.LOGCAT -> {
-                    val logcat = state.androidLogcat
+                    val logcat by androidLogcatFlow.collectAsStateWithLifecycle()
                     val filtered = remember(logcat.lines, logcat.minimumLevel, logcat.query) {
                         logcat.lines.filter { line ->
                             line.level.ordinal >= logcat.minimumLevel.ordinal &&
@@ -4894,6 +4910,7 @@ private fun AndroidDashboardScreen(
 @Composable
 private fun ProfessionalAndroidOverview(
     state: AppUiState,
+    androidBuildLogFlow: kotlinx.coroutines.flow.StateFlow<String>,
     liveElapsedSeconds: Int?,
     showRawLog: Boolean,
     onToggleRawLog: () -> Unit,
@@ -5073,10 +5090,11 @@ private fun ProfessionalAndroidOverview(
 
         if (showRawLog) {
             item {
+                val androidBuildLog by androidBuildLogFlow.collectAsStateWithLifecycle()
                 Surface(color = Color(0xFF11141A), shape = RoundedCornerShape(16.dp)) {
                     SelectionContainer {
                         Text(
-                            state.androidBuildLog.ifBlank { stringResource(R.string.android_no_build_output) },
+                            androidBuildLog.ifBlank { stringResource(R.string.android_no_build_output) },
                             Modifier.fillMaxWidth().heightIn(max = 360.dp).verticalScroll(rememberScrollState()).padding(14.dp),
                             color = Color(0xFFD7DEE9),
                             fontFamily = FontFamily.Monospace,

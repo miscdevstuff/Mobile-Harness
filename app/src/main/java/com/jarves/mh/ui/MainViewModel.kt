@@ -373,7 +373,6 @@ data class AppUiState(
     val workspaceFiles: List<WorkspaceEntry> = emptyList(),
     val androidProjectDetected: Boolean = false,
     val filesLoading: Boolean = false,
-    val diagnostics: DeveloperDiagnostics = DeveloperDiagnostics(),
     val openedFile: OpenedFileState? = null,
     val projectExportRunning: Boolean = false,
     val projectExportSucceededAtMillis: Long? = null,
@@ -397,7 +396,6 @@ data class AppUiState(
     val activeSessionId: String? = null,
     val toastMessage: String? = null,
     val projectTerminalLines: List<TerminalOutputLine> = emptyList(),
-    val projectTerminalLiveOutput: String = "",
     val projectTerminalRunning: Boolean = false,
     val projectTerminalCwd: String = "/workspace",
     val projectTerminalCommand: String? = null,
@@ -441,7 +439,6 @@ data class AppUiState(
     val androidBuildAction: AndroidAction = AndroidAction.NONE,
     val androidBuildStage: AndroidBuildStage = AndroidBuildStage.IDLE,
     val androidBuildIssues: List<AndroidBuildIssue> = emptyList(),
-    val androidBuildLog: String = "",
     val androidBuildStartedAtMillis: Long? = null,
     val androidBuildFinishedAtMillis: Long? = null,
     val androidBuildApkPath: String? = null,
@@ -450,7 +447,6 @@ data class AppUiState(
     val androidApkInfo: AndroidApkInfo? = null,
     val androidHealthChecks: List<AndroidHealthCheck> = emptyList(),
     val androidHealthRunning: Boolean = false,
-    val androidLogcat: AndroidLogcatState = AndroidLogcatState(),
     val appUpdate: AppUpdateInfo? = null,
     val appUpdateStatus: AppUpdateStatus? = null,
     val appUpdateDownloadedBytes: Long = 0L,
@@ -726,6 +722,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _terminalCurrentCommand = MutableStateFlow<String?>(null)
     val terminalCurrentCommand: StateFlow<String?> = _terminalCurrentCommand.asStateFlow()
 
+    private val _projectTerminalLiveOutput = MutableStateFlow("")
+    val projectTerminalLiveOutput: StateFlow<String> = _projectTerminalLiveOutput.asStateFlow()
+
+    private val _androidBuildLog = MutableStateFlow("")
+    val androidBuildLog: StateFlow<String> = _androidBuildLog.asStateFlow()
+
+    private val _androidLogcat = MutableStateFlow(AndroidLogcatState())
+    val androidLogcat: StateFlow<AndroidLogcatState> = _androidLogcat.asStateFlow()
+
+    private val _diagnostics = MutableStateFlow(DeveloperDiagnostics())
+    val diagnostics: StateFlow<DeveloperDiagnostics> = _diagnostics.asStateFlow()
+
     fun runTerminalCommand(cmd: String) {
         val command = cmd.trim()
         if (command.isBlank() || _isTerminalRunning.value) return
@@ -876,10 +884,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val existingLines = _state.value.projectTerminalLines
         projectTerminalStopRequested = false
         val requestedPreviewUrl = detectServerUrl(command)
+        _projectTerminalLiveOutput.value = ""
         _state.update {
             it.copy(
                 projectTerminalRunning = true,
-                projectTerminalLiveOutput = "",
                 projectTerminalCommand = command,
                 pendingTerminalCommand = null,
                 previewReady = it.previewReady || requestedPreviewUrl != null,
@@ -907,10 +915,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val updatedLines = (existingLines + completedLine).takeLast(MAX_PROJECT_TERMINAL_HISTORY)
             saveProjectTerminal(project.id, result.cwd, updatedLines)
             if (_state.value.activeProject?.id == project.id) {
+                _projectTerminalLiveOutput.value = ""
                 _state.update {
                     it.copy(
                         projectTerminalLines = updatedLines,
-                        projectTerminalLiveOutput = "",
                         projectTerminalRunning = false,
                         projectTerminalCwd = result.cwd,
                         projectTerminalCommand = null,
@@ -945,7 +953,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun clearProjectTerminal() {
         val project = _state.value.activeProject ?: return
         if (_state.value.projectTerminalRunning) return
-        _state.update { it.copy(projectTerminalLines = emptyList(), projectTerminalLiveOutput = "") }
+        _projectTerminalLiveOutput.value = ""
+        _state.update { it.copy(projectTerminalLines = emptyList()) }
         saveProjectTerminal(project.id, _state.value.projectTerminalCwd, emptyList())
     }
 
@@ -953,12 +962,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         if (diagnosticsJob?.isActive == true) return
         val now = SystemClock.elapsedRealtime()
         if (now - lastDiagnosticsRefreshAtElapsedMillis < DIAGNOSTICS_REFRESH_COOLDOWN_MS) return
-        _state.update { it.copy(diagnostics = it.diagnostics.copy(loading = true)) }
+        _diagnostics.update { it.copy(loading = true) }
         diagnosticsJob = viewModelScope.launch {
             try {
                 val snapshot = withContext(Dispatchers.IO) { collectDeveloperDiagnostics() }
                 lastDiagnosticsRefreshAtElapsedMillis = SystemClock.elapsedRealtime()
-                _state.update { it.copy(diagnostics = snapshot) }
+                _diagnostics.value = snapshot
             } finally {
                 diagnosticsJob = null
             }
@@ -1012,14 +1021,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun releaseMemoryCaches() {
         folderMetadataCache.clear()
         cachedRecentExitSummary = null
+        _projectTerminalLiveOutput.update { it.takeLast(MEMORY_PRESSURE_TEXT_CHARS) }
+        _androidBuildLog.update { it.takeLast(MEMORY_PRESSURE_TEXT_CHARS) }
+        _androidLogcat.update { it.copy(lines = it.lines.takeLast(MEMORY_PRESSURE_LOGCAT_LINES)) }
         _state.update { current ->
             current.copy(
                 projectTerminalLines = current.projectTerminalLines.takeLast(MEMORY_PRESSURE_TERMINAL_LINES),
-                projectTerminalLiveOutput = current.projectTerminalLiveOutput.takeLast(MEMORY_PRESSURE_TEXT_CHARS),
-                androidBuildLog = current.androidBuildLog.takeLast(MEMORY_PRESSURE_TEXT_CHARS),
-                androidLogcat = current.androidLogcat.copy(
-                    lines = current.androidLogcat.lines.takeLast(MEMORY_PRESSURE_LOGCAT_LINES),
-                ),
             )
         }
     }
@@ -1033,7 +1040,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             if (current.projectTerminalRunning || projectTerminalProcess?.isAlive == true) add(str(R.string.an_process_project_terminal))
             if (terminalProcess?.isAlive == true) add(str(R.string.an_process_quick_terminal))
             if (current.androidBuildRunning || androidBuildProcess?.isAlive == true) add(str(R.string.an_android_build))
-            if (current.androidLogcat.running || androidLogcatProcess?.isAlive == true) add(str(R.string.android_logcat_tab))
+            if (_androidLogcat.value.running || androidLogcatProcess?.isAlive == true) add(str(R.string.android_logcat_tab))
         }
         val runtimeCache = getApplication<Application>().cacheDir.listFiles().orEmpty()
             .asSequence()
@@ -1046,10 +1053,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             activeProcesses = active,
             messageCount = current.messages.size,
             liveActivityCount = current.liveProcess.size,
-            terminalBufferBytes = utf8SizeInBytes(current.projectTerminalLiveOutput) +
+            terminalBufferBytes = utf8SizeInBytes(_projectTerminalLiveOutput.value) +
                 current.projectTerminalLines.sumOf { utf8SizeInBytes(it.output) },
-            buildLogBytes = utf8SizeInBytes(current.androidBuildLog),
-            logcatLines = current.androidLogcat.lines.size,
+            buildLogBytes = utf8SizeInBytes(_androidBuildLog.value),
+            logcatLines = _androidLogcat.value.lines.size,
             fileEntries = current.workspaceFiles.size,
             runtimeCacheBytes = runtimeCache,
             recentExit = recentAppExitSummary(),
@@ -1151,14 +1158,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     val markerIdx = output.lastIndexOf(marker)
                     val visible = (if (markerIdx >= 0) output.substring(0, markerIdx) else output.toString())
                         .takeLast(MAX_PROJECT_TERMINAL_OUTPUT)
-                    _state.update { current ->
-                        if (current.activeProject?.id == projectId) {
-                            current.copy(
-                                projectTerminalLiveOutput = visible,
-                                previewReady = current.previewReady || detectedPreviewUrl != null,
-                                previewUrl = detectedPreviewUrl ?: current.previewUrl,
-                            )
-                        } else current
+                    if (_state.value.activeProject?.id == projectId) {
+                        _projectTerminalLiveOutput.value = visible
+                        if (detectedPreviewUrl != null) {
+                            _state.update { current ->
+                                if (current.activeProject?.id == projectId) {
+                                    current.copy(
+                                        previewReady = true,
+                                        previewUrl = detectedPreviewUrl,
+                                    )
+                                } else current
+                            }
+                        }
                     }
                 }
             }
@@ -1330,6 +1341,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
         val now = System.currentTimeMillis()
         val message = if (launch) str(R.string.an_no_changes_opened_app) else str(R.string.an_apk_already_current)
+        _androidBuildLog.value = "Gradle skipped: project files have not changed since the last successful build.\n"
         _state.update {
             it.copy(
                 androidBuildRunning = false,
@@ -1338,7 +1350,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 androidBuildStage = AndroidBuildStage.COMPLETE,
                 androidBuildIssues = emptyList(),
                 androidBuildMessage = message,
-                androidBuildLog = "Gradle skipped: project files have not changed since the last successful build.\n",
                 androidBuildStartedAtMillis = now,
                 androidBuildFinishedAtMillis = now,
                 androidBuildApkPath = apk.absolutePath,
@@ -1466,6 +1477,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
         val startedAt = System.currentTimeMillis()
         androidBuildStopRequested = false
+        _androidBuildLog.value = ""
         _state.update {
             it.copy(
                 androidBuildRunning = true,
@@ -1474,7 +1486,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 androidBuildStage = AndroidBuildStage.PREPARING,
                 androidBuildIssues = emptyList(),
                 androidBuildMessage = if (task == "clean") str(R.string.an_preparing_clean) else str(R.string.an_preparing_build),
-                androidBuildLog = "",
                 androidBuildStartedAtMillis = startedAt,
                 androidBuildFinishedAtMillis = null,
                 androidBuildApkPath = null,
@@ -1494,12 +1505,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     ?: error(str(R.string.vm_no_android_project))
                 buildWorkspace = workspace
                 val command = androidGradleCommand(workspace, task)
+                _androidBuildLog.value = "$ $command\n"
                 _state.update {
                     it.copy(
                         androidBuildPhase = AndroidBuildPhase.BUILDING,
                         androidBuildStage = AndroidBuildStage.RESOLVING,
                         androidBuildMessage = if (task == "clean") str(R.string.an_cleaning_project) else str(R.string.an_running_assemble),
-                        androidBuildLog = "$ $command\n",
                     )
                 }
                 val process = installer.process(
@@ -1511,7 +1522,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 RuntimeTaskController.stopAction = ::cancelAndroidBuild
                 val native = process as? NativeSpawnProcess ?: error(str(R.string.an_unsupported_build_process))
                 var offset = 0L
-                val buildLogBuffer = StringBuilder(_state.value.androidBuildLog)
+                val buildLogBuffer = StringBuilder(_androidBuildLog.value)
                 val ansiCarry = StringBuilder()
                 val readBuffer = ByteArray(16 * 1024)
                 var lastBuildUiFlushAt = 0L
@@ -1535,13 +1546,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         val now = SystemClock.elapsedRealtime()
                         if (nextStage != currentStage || now - lastBuildUiFlushAt >= BUILD_LOG_FLUSH_INTERVAL_MS) {
                             lastBuildUiFlushAt = now
-                            val snapshotLog = buildLogBuffer.toString()
-                            _state.update { current ->
-                                current.copy(
-                                    androidBuildLog = snapshotLog,
-                                    androidBuildStage = nextStage,
-                                    androidBuildMessage = androidStageMessage(nextStage),
-                                )
+                            _androidBuildLog.value = buildLogBuffer.toString()
+                            if (nextStage != currentStage) {
+                                _state.update { current ->
+                                    current.copy(
+                                        androidBuildStage = nextStage,
+                                        androidBuildMessage = androidStageMessage(nextStage),
+                                    )
+                                }
                             }
                         }
                     }
@@ -1550,8 +1562,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     buildLogBuffer.appendBoundedTerminal(sanitizeTerminalOutput(ansiCarry.toString()), MAX_ANDROID_BUILD_LOG)
                     ansiCarry.clear()
                 }
-                val finalLogSnapshot = buildLogBuffer.toString()
-                _state.update { current -> current.copy(androidBuildLog = finalLogSnapshot) }
+                _androidBuildLog.value = buildLogBuffer.toString()
                 val exitCode = process.waitFor()
                 val buildOutput = sanitizeTerminalOutput(native.outputFile.readTailText(MAX_PROCESS_OUTPUT_BYTES))
                 finalExitCode = exitCode
@@ -1695,7 +1706,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     JSONObject()
                         .put("phase", state.androidBuildPhase.name)
                         .put("message", state.androidBuildMessage)
-                        .put("log", state.androidBuildLog.takeLast(MAX_ANDROID_BUILD_LOG))
+                        .put("log", _androidBuildLog.value.takeLast(MAX_ANDROID_BUILD_LOG))
                         .put("startedAtMillis", state.androidBuildStartedAtMillis)
                         .put("finishedAtMillis", state.androidBuildFinishedAtMillis)
                         .put("apkPath", state.androidBuildApkPath)
@@ -2008,17 +2019,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val info = _state.value.androidApkInfo
         val packageName = info?.packageName
         if (packageName.isNullOrBlank() || info.installed.not()) {
-            _state.update { it.copy(androidLogcat = it.androidLogcat.copy(available = false, message = str(R.string.an_install_apk_before_logcat))) }
+            _androidLogcat.update { it.copy(available = false, message = str(R.string.an_install_apk_before_logcat)) }
             return
         }
         if (!hasLogcatAccess()) {
-            _state.update { it.copy(androidLogcat = it.androidLogcat.copy(available = false, message = LOGCAT_GRANT_COMMAND, packageName = packageName)) }
+            _androidLogcat.update { it.copy(available = false, message = LOGCAT_GRANT_COMMAND, packageName = packageName) }
             return
         }
         val app = getApplication<Application>()
         val uid = runCatching { app.packageManager.getApplicationInfo(packageName, 0).uid }.getOrNull()
         if (uid == null) {
-            _state.update { it.copy(androidLogcat = it.androidLogcat.copy(available = false, message = str(R.string.an_installed_app_not_found))) }
+            _androidLogcat.update { it.copy(available = false, message = str(R.string.an_installed_app_not_found)) }
             return
         }
         androidLogcatJob = viewModelScope.launch(Dispatchers.IO) {
@@ -2031,7 +2042,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 val process = if (root) ProcessBuilder("su", "-c", logCommand).redirectErrorStream(true).start()
                     else ProcessBuilder("/system/bin/logcat", "--uid=$uid", "-v", "threadtime", "-T", since).redirectErrorStream(true).start()
                 androidLogcatProcess = process
-                _state.update { it.copy(androidLogcat = it.androidLogcat.copy(available = true, running = true, paused = false, message = null, packageName = packageName)) }
+                _androidLogcat.update { it.copy(available = true, running = true, paused = false, message = null, packageName = packageName) }
                 val pendingBatch = ArrayList<AndroidLogLine>(64)
                 var lastFlushAt = SystemClock.elapsedRealtime()
                 fun flushBatch() {
@@ -2039,17 +2050,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     val batch = pendingBatch.toList()
                     pendingBatch.clear()
                     lastFlushAt = SystemClock.elapsedRealtime()
-                    _state.update { current ->
-                        current.copy(
-                            androidLogcat = current.androidLogcat.copy(
-                                lines = (current.androidLogcat.lines + batch).takeLast(MAX_LOGCAT_LINES),
-                            ),
-                        )
+                    _androidLogcat.update { current ->
+                        current.copy(lines = (current.lines + batch).takeLast(MAX_LOGCAT_LINES))
                     }
                 }
                 process.inputStream.bufferedReader().useLines { lines ->
                     lines.forEach { raw ->
-                        if (!_state.value.androidLogcat.paused) {
+                        if (!_androidLogcat.value.paused) {
                             pendingBatch.add(parseAndroidLogLine(raw))
                             val now = SystemClock.elapsedRealtime()
                             if (pendingBatch.size >= 64 || now - lastFlushAt >= LOGCAT_FLUSH_INTERVAL_MS) {
@@ -2060,10 +2067,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 flushBatch()
             }.onFailure { error ->
-                _state.update { it.copy(androidLogcat = it.androidLogcat.copy(running = false, message = error.message ?: str(R.string.an_logcat_stopped))) }
+                _androidLogcat.update { it.copy(running = false, message = error.message ?: str(R.string.an_logcat_stopped)) }
             }
             androidLogcatProcess = null
-            _state.update { it.copy(androidLogcat = it.androidLogcat.copy(running = false)) }
+            _androidLogcat.update { it.copy(running = false) }
         }
     }
 
@@ -2087,13 +2094,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         androidLogcatProcess?.destroy()
         androidLogcatJob?.cancel()
         androidLogcatJob = null
-        _state.update { it.copy(androidLogcat = it.androidLogcat.copy(running = false)) }
+        _androidLogcat.update { it.copy(running = false) }
     }
 
-    fun toggleAndroidLogcatPause() = _state.update { it.copy(androidLogcat = it.androidLogcat.copy(paused = !it.androidLogcat.paused)) }
-    fun clearAndroidLogcat() = _state.update { it.copy(androidLogcat = it.androidLogcat.copy(lines = emptyList())) }
-    fun setAndroidLogcatQuery(value: String) = _state.update { it.copy(androidLogcat = it.androidLogcat.copy(query = value)) }
-    fun setAndroidLogcatLevel(value: AndroidLogLevel) = _state.update { it.copy(androidLogcat = it.androidLogcat.copy(minimumLevel = value)) }
+    fun toggleAndroidLogcatPause() = _androidLogcat.update { it.copy(paused = !it.paused) }
+    fun clearAndroidLogcat() = _androidLogcat.update { it.copy(lines = emptyList()) }
+    fun setAndroidLogcatQuery(value: String) = _androidLogcat.update { it.copy(query = value) }
+    fun setAndroidLogcatLevel(value: AndroidLogLevel) = _androidLogcat.update { it.copy(minimumLevel = value) }
 
     fun openAndroidLogLine(line: AndroidLogLine) {
         val fileName = line.filePath ?: return
@@ -3134,6 +3141,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val saved = preferences.loadMessages(project.id, activeChat.id)
         val msgs = saved.ifEmpty { listOf(ChatMessage(fromUser = false, text = "Hi! Tell me what you want to build or change.")) }
         val androidBuild = loadAndroidBuildRecord(project.id)
+        _projectTerminalLiveOutput.value = ""
+        _androidBuildLog.value = androidBuild.log
         _state.update {
             it.copy(
                 activeProject = project,
@@ -3153,7 +3162,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 androidProjectDetected = false,
                 filesLoading = true,
                 projectTerminalLines = terminal.lines,
-                projectTerminalLiveOutput = "",
                 projectTerminalRunning = false,
                 projectTerminalCwd = terminal.cwd,
                 projectTerminalCommand = null,
@@ -3169,7 +3177,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 androidBuildStage = androidBuild.stage,
                 androidBuildIssues = androidBuild.issues,
                 androidBuildMessage = androidBuild.message,
-                androidBuildLog = androidBuild.log,
                 androidBuildStartedAtMillis = androidBuild.startedAtMillis,
                 androidBuildFinishedAtMillis = androidBuild.finishedAtMillis,
                 androidBuildApkPath = androidBuild.apkPath,
@@ -3219,6 +3226,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
 
+        _projectTerminalLiveOutput.value = ""
         _state.update {
             it.copy(
                 activeProject = null,
@@ -3232,7 +3240,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 activeSessionId = null,
                 pendingApproval = null,
                 projectTerminalLines = emptyList(),
-                projectTerminalLiveOutput = "",
                 projectTerminalRunning = false,
                 projectTerminalCwd = "/workspace",
                 projectTerminalCommand = null,
@@ -3296,6 +3303,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         )
         configureBridgeRoots(project.id, project.rootPath)
         val guestRoot = projectGuestRoot(project)
+        _projectTerminalLiveOutput.value = ""
         _state.update {
             it.copy(
                 projects = listOf(project) + it.projects,
@@ -3310,7 +3318,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 androidProjectDetected = false,
                 filesLoading = true,
                 projectTerminalLines = emptyList(),
-                projectTerminalLiveOutput = "",
                 projectTerminalRunning = false,
                 projectTerminalCwd = guestRoot,
                 projectTerminalCommand = null,

@@ -57,6 +57,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -89,6 +90,7 @@ private enum class SettingsSection { APPEARANCE, LANGUAGE, TOOLS, RUNTIME, DIAGN
 @Composable
 fun SettingsScreen(
     state: AppUiState,
+    diagnosticsFlow: kotlinx.coroutines.flow.StateFlow<DeveloperDiagnostics>,
     onSetThemeMode: (AppThemeMode) -> Unit,
     onSetLanguage: (String) -> Unit = {},
     onClearTerminal: () -> Unit,
@@ -206,8 +208,10 @@ fun SettingsScreen(
                         if (opening) onRefreshDiagnostics()
                     },
                 ) {
+                    val diagnostics by diagnosticsFlow.collectAsStateWithLifecycle()
                     DeveloperDiagnosticsContent(
                         state = state,
+                        diagnostics = diagnostics,
                         onRefresh = onRefreshDiagnostics,
                         onStopInactiveProcesses = onStopInactiveProcesses,
                         onClearRuntimeCache = onClearRuntimeCache,
@@ -486,11 +490,11 @@ fun SettingsScreen(
 @Composable
 private fun DeveloperDiagnosticsContent(
     state: AppUiState,
+    diagnostics: DeveloperDiagnostics,
     onRefresh: () -> Unit,
     onStopInactiveProcesses: () -> Unit,
     onClearRuntimeCache: () -> Unit,
 ) {
-    val diagnostics = state.diagnostics
     val busy = state.isRunning || state.projectTerminalRunning || state.androidBuildRunning
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
         TextButton(onClick = onRefresh, enabled = !diagnostics.loading) {

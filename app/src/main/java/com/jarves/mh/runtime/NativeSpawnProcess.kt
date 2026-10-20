@@ -123,11 +123,13 @@ internal suspend fun NativeSpawnProcess.forEachOutputLine(
     pollIntervalMs: Long = 50L,
     maxPendingChars: Int = 256 * 1024,
     onIdleTick: (suspend () -> Unit)? = null,
+    onOversizedLine: (suspend (CharSequence) -> Unit)? = null,
     onLine: suspend (String) -> Boolean,
 ) {
     var offset = 0L
     val pending = StringBuilder()
     val buffer = ByteArray(16 * 1024)
+    var discardingOversizedLine = false
     var stopEarly = false
     while (!stopEarly && (isAlive || outputFile.length() > offset)) {
         coroutineContext.ensureActive()
@@ -147,7 +149,14 @@ internal suspend fun NativeSpawnProcess.forEachOutputLine(
             continue
         }
         offset += count
-        pending.append(buffer.decodeToString(0, count).replace('\r', '\n'))
+        var decoded = buffer.decodeToString(0, count).replace('\r', '\n')
+        if (discardingOversizedLine) {
+            val end = decoded.indexOf('\n')
+            if (end < 0) continue
+            decoded = decoded.substring(end + 1)
+            discardingOversizedLine = false
+        }
+        pending.append(decoded)
         var newline = pending.indexOf("\n")
         while (newline >= 0) {
             val line = pending.substring(0, newline)
@@ -159,10 +168,16 @@ internal suspend fun NativeSpawnProcess.forEachOutputLine(
             newline = pending.indexOf("\n")
         }
         if (pending.length > maxPendingChars) {
-            pending.delete(0, pending.length - maxPendingChars)
+            if (onOversizedLine != null) {
+                onOversizedLine(pending)
+                pending.clear()
+                discardingOversizedLine = true
+            } else {
+                pending.delete(0, pending.length - maxPendingChars)
+            }
         }
     }
-    if (!stopEarly && pending.isNotEmpty()) {
+    if (!stopEarly && !discardingOversizedLine && pending.isNotEmpty()) {
         val tail = pending.toString().trimEnd('\r', '\n')
         if (tail.isNotEmpty()) onLine(tail)
     }
