@@ -388,4 +388,8 @@
     <string name="diagnostics_inactive_stopped">Inactive processes stopped</string>
     <string name="diagnostics_cache_busy">Wait for active work to finish before clearing output</string>
     <string name="diagnostics_cache_cleared">Disposable runtime output cleared</string>
+    <string name="stack_godot_label">Godot 4 (GDScript)</string>
+    <string name="stack_godot_desc">2D and 3D games with Godot 4 headless engine and local Godot MCP server.</string>
+    <string name="stack_godot_summary">Godot 4 ARM64 headless binary and local godot-mcp server</string>
+    <string name="ws_stack_desc_godot">Godot 4 ARM64 headless + local Godot MCP</string>
 </resources>

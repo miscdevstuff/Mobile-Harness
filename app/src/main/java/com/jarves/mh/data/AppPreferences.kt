@@ -1,5 +1,12 @@
 package com.jarves.mh.data
 
+
+import com.jarves.mh.model.AgentSkill
+import com.jarves.mh.model.BuiltInMcpServers
+import com.jarves.mh.model.BuiltInSkills
+import com.jarves.mh.model.McpServerConfig
+import com.jarves.mh.model.McpSettings
+import com.jarves.mh.model.SkillSettings
 import android.content.Context
 import com.jarves.mh.model.AgentKind
 import com.jarves.mh.model.AndroidTemplate
@@ -416,5 +423,43 @@ class AppPreferences(private val context: Context) {
     private fun String.toChatTitle(): String {
         val clean = replace(Regex("\\s+"), " ").trim()
         return if (clean.length <= 42) clean else clean.take(39).trimEnd() + "…"
+    }
+
+    fun loadSkillSettings(): SkillSettings {
+        val raw = preferences.getString("skill_settings_json", null) ?: return SkillSettings()
+        return runCatching { appJson.decodeFromString<SkillSettings>(raw) }.getOrDefault(SkillSettings())
+    }
+
+    fun saveSkillSettings(settings: SkillSettings) {
+        preferences.edit().putString("skill_settings_json", appJson.encodeToString(settings)).apply()
+    }
+
+    fun loadSkills(): List<AgentSkill> {
+        val raw = preferences.getString("agent_skills_json", null) ?: return BuiltInSkills.all()
+        val saved = runCatching { appJson.decodeFromString<List<AgentSkill>>(raw) }.getOrDefault(emptyList())
+        return BuiltInSkills.mergeWithSaved(saved)
+    }
+
+    fun saveSkills(skills: List<AgentSkill>) {
+        preferences.edit().putString("agent_skills_json", appJson.encodeToString(skills)).apply()
+    }
+
+    fun loadMcpSettings(): McpSettings {
+        val raw = preferences.getString("mcp_settings_json", null) ?: return McpSettings()
+        return runCatching { appJson.decodeFromString<McpSettings>(raw) }.getOrDefault(McpSettings())
+    }
+
+    fun saveMcpSettings(settings: McpSettings) {
+        preferences.edit().putString("mcp_settings_json", appJson.encodeToString(settings)).apply()
+    }
+
+    fun loadMcpServers(): List<McpServerConfig> {
+        val raw = preferences.getString("mcp_servers_json", null) ?: return BuiltInMcpServers.all()
+        val saved = runCatching { appJson.decodeFromString<List<McpServerConfig>>(raw) }.getOrDefault(emptyList())
+        return BuiltInMcpServers.mergeWithSaved(saved)
+    }
+
+    fun saveMcpServers(servers: List<McpServerConfig>) {
+        preferences.edit().putString("mcp_servers_json", appJson.encodeToString(servers)).apply()
     }
 }

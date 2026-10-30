@@ -879,6 +879,7 @@ class RuntimeInstaller(private val context: Context) {
                 removePath(File(rootfs, "root/.cache/composer"))
                 removePath(File(rootfs, "root/.composer"))
             }
+            DevStack.GODOT -> removeGodotToolchain(onProgress)
         }
 
         writeDevStackState(readDevStackState().apply { put(stack.name, false) })
@@ -1000,6 +1001,7 @@ class RuntimeInstaller(private val context: Context) {
                 installComposer(proot, from, onProgress)
                 verifyGuest(proot, "php --version && composer --version", str(R.string.rt_install_verify_failed, "PHP"))
             }
+            DevStack.GODOT -> installGodotToolchain(onProgress)
         }
         if (!verified) return
         writeDevStackState(readDevStackState().apply { put(stack.name, true) })
@@ -1908,6 +1910,60 @@ printf '%s\n' '{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decis
     }
 
     private fun File.readTextOrNull(): String? = runCatching { readText().trim() }.getOrNull()
+
+
+    private suspend fun installGodotToolchain(onProgress: suspend (RuntimeInstallProgress) -> Unit) {
+        val proot = File(context.applicationInfo.nativeLibraryDir, "libproot.so")
+        onProgress(RuntimeInstallProgress("Installing Godot 4 headless dependencies…", 0.15f, indeterminate = true))
+        val installScript = """
+            set -e
+            export DEBIAN_FRONTEND=noninteractive
+            apt-get update -y
+            apt-get install -y --no-install-recommends ca-certificates curl unzip coreutils libfontconfig1 libfreetype6 libgl1 libx11-6 libxcursor1 libxinerama1 libxi6 libxrandr2 libxrender1
+            mkdir -p /tmp/godot-install /usr/local/bin /usr/local/lib/godot-mcp/build
+            curl -fL --retry 3 -o /tmp/godot-install/SHA512-SUMS.txt https://github.com/godotengine/godot/releases/download/4.3-stable/SHA512-SUMS.txt
+            curl -fL --retry 3 -o /tmp/godot-install/Godot_v4.3-stable_linux.arm64.zip https://github.com/godotengine/godot/releases/download/4.3-stable/Godot_v4.3-stable_linux.arm64.zip
+            (cd /tmp/godot-install && grep -F "  Godot_v4.3-stable_linux.arm64.zip" SHA512-SUMS.txt | sha512sum -c -)
+            unzip -o /tmp/godot-install/Godot_v4.3-stable_linux.arm64.zip -d /tmp/godot-install
+            mv /tmp/godot-install/Godot_v4.3-stable_linux.arm64 /usr/local/bin/godot
+            chmod 755 /usr/local/bin/godot
+            rm -rf /tmp/godot-install
+            npm install --prefix /usr/local/lib/godot-mcp @coding-solo/godot-mcp
+            cat > /usr/local/lib/godot-mcp/build/index.js << 'EOF_MCP'
+#!/usr/bin/env node
+import('node:fs').then(async ({ readFileSync }) => {
+  const pkgDir = '/usr/local/lib/godot-mcp/node_modules/@coding-solo/godot-mcp';
+  const pkg = JSON.parse(readFileSync(pkgDir + '/package.json', 'utf8'));
+  const binEntry = typeof pkg.bin === 'string' ? pkg.bin : (pkg.bin && Object.values(pkg.bin)[0]);
+  const entry = binEntry || pkg.main || 'build/index.js';
+  await import(pkgDir + '/' + entry.replace(/^\.\//, ''));
+}).catch((err) => {
+  console.error(err);
+  process.exit(1);
+});
+EOF_MCP
+            chmod 755 /usr/local/lib/godot-mcp/build/index.js
+        """.trimIndent()
+        runGuestCommand(
+            proot = proot,
+            command = installScript,
+            displayCommand = "Install Godot 4 ARM64 & Godot MCP",
+            fraction = 0.6f,
+            timeoutMs = 20 * 60_000L,
+            onProgress = onProgress,
+            failureMessage = "Godot 4 toolchain installation failed",
+        )
+        invalidateInstalledCache()
+        onProgress(RuntimeInstallProgress("Godot 4 tools installed", 1f))
+    }
+
+    private suspend fun removeGodotToolchain(onProgress: suspend (RuntimeInstallProgress) -> Unit) {
+        onProgress(RuntimeInstallProgress("Removing Godot 4 toolchain…", 0.3f, indeterminate = true))
+        File(rootfs, "usr/local/bin/godot").delete()
+        File(rootfs, "usr/local/lib/godot-mcp").deleteRecursively()
+        invalidateInstalledCache()
+        onProgress(RuntimeInstallProgress("Godot 4 toolchain removed", 1f))
+    }
 
     companion object {
         const val AGY_GUEST_PATH = "/root/.local/bin/agy"

@@ -104,6 +104,7 @@ abstract class BaseRuntimeBridge(
     @Volatile protected var activeSessionId: String? = null
     @Volatile protected var userStopRequested: Boolean = false
     @Volatile protected var activeProjectSlug: String? = null
+    @Volatile protected var activeWorkspaceDir: File? = null
     @Volatile protected var taskStartedAtElapsedRealtime: Long = 0L
     @Volatile protected var lastForegroundProgressAt: Long = 0L
     @Volatile protected var foregroundResultPosted: Boolean = false
@@ -149,10 +150,16 @@ abstract class BaseRuntimeBridge(
     protected fun ensureWorkspace(projectId: String): File {
         val base = File(context.filesDir, "workspaces/$projectId").apply { mkdirs() }.canonicalFile
         val rootPath = projectRoots[projectId].orEmpty()
-        if (rootPath.isBlank()) return base
-        val selected = File(base, rootPath).canonicalFile
-        require(selected.toPath().startsWith(base.toPath())) { "Unsafe project root" }
-        return selected.apply { mkdirs() }
+        val resolved = if (rootPath.isBlank()) {
+            base
+        } else {
+            val selected = File(base, rootPath).canonicalFile
+            require(selected.toPath().startsWith(base.toPath())) { "Unsafe project root" }
+            selected.apply { mkdirs() }
+        }
+        activeWorkspaceDir = resolved
+        runCatching { McpAndSkillsEngine.stageIsolatedBridgeFiles(context, resolved) }
+        return resolved
     }
 
     override suspend fun respondToApproval(request: ToolRequest, approved: Boolean) = Unit
@@ -210,6 +217,18 @@ abstract class BaseRuntimeBridge(
         sb.appendLine("For local servers, give a clear start command and never use a kill command that searches its own command text with pgrep, because it can terminate the terminal itself.")
         sb.appendLine("</project_workspace>")
         sb.appendLine()
+        val mcpAndSkillsBlock = runCatching {
+            McpAndSkillsEngine.buildPromptInjection(
+                context = context,
+                workspaceDir = activeWorkspaceDir,
+                guestWorkspacePath = guestWorkspacePath,
+                currentPrompt = currentPrompt,
+            )
+        }.getOrDefault("")
+        if (mcpAndSkillsBlock.isNotBlank()) {
+            sb.appendLine(mcpAndSkillsBlock)
+            sb.appendLine()
+        }
         if (priorMessages.isEmpty()) {
             sb.appendLine(currentPrompt)
             return sb.toString()

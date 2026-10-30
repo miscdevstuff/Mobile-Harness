@@ -394,6 +394,7 @@ fun PocketDevApp(viewModel: MainViewModel = viewModel()) {
         )
         state.activeProject != null && state.workspaceVisible -> WorkspaceScreen(
             state = state,
+            viewModel = viewModel,
             projectTerminalLiveOutputFlow = viewModel.projectTerminalLiveOutput,
             androidBuildLogFlow = viewModel.androidBuildLog,
             androidLogcatFlow = viewModel.androidLogcat,
@@ -1119,6 +1120,11 @@ private fun getDevStackVisuals(stack: DevStack): DevStackVisuals = when (stack) 
         accentColor = Color(0xFF818CF8),
         tag = "php-cli + Composer",
     )
+    DevStack.GODOT -> DevStackVisuals(
+        icon = Icons.Default.SmartToy,
+        accentColor = Color(0xFF478CBF),
+        tag = "Godot 4 ARM64 + MCP",
+    )
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -1540,6 +1546,10 @@ private fun setupTimeEstimate(selected: Set<DevStack>): String {
         minimumMinutes += 2
         maximumMinutes += 4
     }
+    if (DevStack.GODOT in selected) {
+        minimumMinutes += 2
+        maximumMinutes += 4
+    }
     return stringResource(R.string.setup_time_minutes, minimumMinutes, maximumMinutes)
 }
 
@@ -1564,7 +1574,7 @@ private fun toolchainDownloadSummary(selected: Set<DevStack>, agent: AgentKind):
         } +
         (if (DevStack.PYTHON in selected) PYTHON_RUNTIME_DOWNLOAD_MB else 0) +
         (if (DevStack.ANDROID in selected) ANDROID_RUNTIME_DOWNLOAD_MB else 0)
-    val laterPackages = selected.intersect(setOf(DevStack.CPP, DevStack.PHP))
+    val laterPackages = selected.intersect(setOf(DevStack.CPP, DevStack.PHP, DevStack.GODOT))
     val downloadText = stringResource(R.string.ws_download_total_mb, total)
     val laterText = stringResource(R.string.ws_download_c_php_later)
     val wifiText = stringResource(R.string.ws_download_wifi_recommended)
@@ -1589,6 +1599,7 @@ private fun DevStackChoiceRow(
         DevStack.ANDROID -> stringResource(R.string.ws_stack_desc_android)
         DevStack.CPP -> stringResource(R.string.ws_stack_desc_cpp)
         DevStack.PHP -> stringResource(R.string.ws_stack_desc_php)
+        DevStack.GODOT -> stringResource(R.string.ws_stack_desc_godot)
     }
 
     Row(
@@ -4019,6 +4030,7 @@ private fun ReadOnlyProjectScreen(
 @Composable
 private fun WorkspaceScreen(
     state: AppUiState,
+    viewModel: MainViewModel,
     projectTerminalLiveOutputFlow: kotlinx.coroutines.flow.StateFlow<String>,
     androidBuildLogFlow: kotlinx.coroutines.flow.StateFlow<String>,
     androidLogcatFlow: kotlinx.coroutines.flow.StateFlow<com.jarves.mh.runtime.AndroidLogcatState>,
@@ -4180,7 +4192,14 @@ private fun WorkspaceScreen(
 
     var selectedTab by rememberSaveable { mutableStateOf(WorkspaceTab.CHAT) }
     var showChats by rememberSaveable { mutableStateOf(false) }
+    var showSkillsSheet by rememberSaveable { mutableStateOf(false) }
+    var showMcpSheet by rememberSaveable { mutableStateOf(false) }
+    var showWorkspaceMenu by rememberSaveable { mutableStateOf(false) }
     var showAndroidBuild by rememberSaveable { mutableStateOf(false) }
+    val skillSettings by viewModel.skillSettings.collectAsStateWithLifecycle()
+    val skills by viewModel.skills.collectAsStateWithLifecycle()
+    val mcpSettings by viewModel.mcpSettings.collectAsStateWithLifecycle()
+    val mcpServers by viewModel.mcpServers.collectAsStateWithLifecycle()
     val activeChat = state.projectChats.firstOrNull { it.id == state.activeChatId }
     val requestAndroidAction: (AndroidAction) -> Unit = { action ->
         val mayInstall = action in setOf(AndroidAction.INSTALL, AndroidAction.RUN, AndroidAction.BUILD_AND_RUN)
@@ -4264,6 +4283,39 @@ private fun WorkspaceScreen(
             },
         )
     }
+    if (showSkillsSheet) {
+        SkillsManagerSheet(
+            settings = skillSettings,
+            skills = skills,
+            onDismiss = { showSkillsSheet = false },
+            onToggleMaster = viewModel::toggleSkillsMaster,
+            onUpdateSettings = viewModel::updateSkillSettings,
+            onToggleSkill = viewModel::toggleSkill,
+            onSaveSkill = viewModel::saveSkill,
+            onDeleteSkill = viewModel::deleteSkill,
+            onResetBuiltInSkill = viewModel::resetBuiltInSkill,
+            onImportSkillUri = viewModel::importSkillFromUri,
+        )
+    }
+    if (showMcpSheet) {
+        val mcpTestingServerIds by viewModel.mcpTestingServerIds.collectAsStateWithLifecycle()
+        val mcpTestStatuses by viewModel.mcpTestStatuses.collectAsStateWithLifecycle()
+        McpServersSheet(
+            settings = mcpSettings,
+            servers = mcpServers,
+            testingServerIds = mcpTestingServerIds,
+            testStatuses = mcpTestStatuses,
+            godotStackInstalled = DevStack.GODOT in state.installedDevStacks,
+            onDismiss = { showMcpSheet = false },
+            onToggleMaster = viewModel::toggleMcpMaster,
+            onUpdateSettings = viewModel::updateMcpSettings,
+            onToggleServer = viewModel::toggleMcpServer,
+            onSaveServer = viewModel::saveMcpServer,
+            onDeleteServer = viewModel::deleteMcpServer,
+            onResetBuiltInServer = viewModel::resetBuiltInMcpServer,
+            onTestServer = viewModel::testMcpServerConnection,
+        )
+    }
     state.pendingTerminalCommand?.let { command ->
         AlertDialog(
             onDismissRequest = onTerminalCancel,
@@ -4324,8 +4376,83 @@ private fun WorkspaceScreen(
                             else Icon(Icons.Default.PlayArrow, stringResource(R.string.ws_build_run_android))
                         }
                     }
-                    IconButton(onClick = { showChats = true }) { Icon(Icons.Default.History, stringResource(R.string.ws_project_chats)) }
-                    if (state.isRunning) CircularProgressIndicator(Modifier.padding(12.dp).size(20.dp), strokeWidth = 2.dp)
+                    if (state.isRunning) CircularProgressIndicator(Modifier.padding(end = 4.dp).size(18.dp), strokeWidth = 2.dp)
+                    Box {
+                        val activeSkillsCount = if (skillSettings.masterEnabled) skills.count { it.enabled } else 0
+                        val enabledMcpCount = if (mcpSettings.masterEnabled) mcpServers.count { it.enabled } else 0
+                        IconButton(onClick = { showWorkspaceMenu = true }) {
+                            Icon(Icons.Default.MoreVert, contentDescription = stringResource(R.string.more_options))
+                        }
+                        DropdownMenu(
+                            expanded = showWorkspaceMenu,
+                            onDismissRequest = { showWorkspaceMenu = false },
+                        ) {
+                            DropdownMenuItem(
+                                text = {
+                                    Column {
+                                        Text(stringResource(R.string.ws_project_chats), fontWeight = FontWeight.Medium)
+                                        Text(
+                                            "${state.projectChats.size} saved",
+                                            fontSize = 11.sp,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        )
+                                    }
+                                },
+                                leadingIcon = { Icon(Icons.Default.History, contentDescription = null) },
+                                onClick = {
+                                    showWorkspaceMenu = false
+                                    showChats = true
+                                },
+                            )
+                            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
+                            DropdownMenuItem(
+                                text = {
+                                    Column {
+                                        Text("Agent skills", fontWeight = FontWeight.Medium)
+                                        Text(
+                                            if (activeSkillsCount > 0) "$activeSkillsCount active" else "Off (default)",
+                                            fontSize = 11.sp,
+                                            color = if (activeSkillsCount > 0) PocketGreen else MaterialTheme.colorScheme.onSurfaceVariant,
+                                        )
+                                    }
+                                },
+                                leadingIcon = {
+                                    Icon(
+                                        Icons.Default.AutoAwesome,
+                                        contentDescription = null,
+                                        tint = if (activeSkillsCount > 0) PocketOrange else MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                },
+                                onClick = {
+                                    showWorkspaceMenu = false
+                                    showSkillsSheet = true
+                                },
+                            )
+                            DropdownMenuItem(
+                                text = {
+                                    Column {
+                                        Text("MCP servers", fontWeight = FontWeight.Medium)
+                                        Text(
+                                            if (enabledMcpCount > 0) "$enabledMcpCount enabled" else "Off (default)",
+                                            fontSize = 11.sp,
+                                            color = if (enabledMcpCount > 0) PocketGreen else MaterialTheme.colorScheme.onSurfaceVariant,
+                                        )
+                                    }
+                                },
+                                leadingIcon = {
+                                    Icon(
+                                        Icons.Default.Dns,
+                                        contentDescription = null,
+                                        tint = if (enabledMcpCount > 0) PocketOrange else MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                },
+                                onClick = {
+                                    showWorkspaceMenu = false
+                                    showMcpSheet = true
+                                },
+                            )
+                        }
+                    }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background),
             )

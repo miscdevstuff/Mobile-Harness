@@ -344,6 +344,11 @@ enum class DevStack(
         "Websites and apps with PHP — classic sites and Laravel projects.",
         "php-cli, common extensions, and Composer",
     ),
+    GODOT(
+        "Godot 4 (GDScript)",
+        "2D and 3D games with Godot 4 headless engine and local Godot MCP server.",
+        "Godot 4 ARM64 headless binary and local godot-mcp server",
+    ),
 }
 
 data class ToolRequest(

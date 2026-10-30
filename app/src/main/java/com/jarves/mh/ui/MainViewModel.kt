@@ -30,6 +30,14 @@ import com.jarves.mh.data.AppPreferences
 import com.jarves.mh.data.appJson
 import com.jarves.mh.data.resolveProviderSecret
 import com.jarves.mh.model.ActivityItem
+import com.jarves.mh.model.AgentSkill
+import com.jarves.mh.model.BuiltInMcpServers
+import com.jarves.mh.model.BuiltInSkills
+import com.jarves.mh.model.McpServerConfig
+import com.jarves.mh.model.McpSettings
+import com.jarves.mh.model.SkillMarkdownCodec
+import com.jarves.mh.model.SkillSettings
+import com.jarves.mh.runtime.McpAndSkillsEngine
 import com.jarves.mh.model.AgentKind
 import com.jarves.mh.model.ChatMessage
 import com.jarves.mh.model.ChatAttachment
@@ -733,6 +741,24 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _diagnostics = MutableStateFlow(DeveloperDiagnostics())
     val diagnostics: StateFlow<DeveloperDiagnostics> = _diagnostics.asStateFlow()
+
+    private val _skillSettings = MutableStateFlow(preferences.loadSkillSettings())
+    val skillSettings: StateFlow<SkillSettings> = _skillSettings.asStateFlow()
+
+    private val _skills = MutableStateFlow(preferences.loadSkills())
+    val skills: StateFlow<List<AgentSkill>> = _skills.asStateFlow()
+
+    private val _mcpSettings = MutableStateFlow(preferences.loadMcpSettings())
+    val mcpSettings: StateFlow<McpSettings> = _mcpSettings.asStateFlow()
+
+    private val _mcpServers = MutableStateFlow(preferences.loadMcpServers())
+    val mcpServers: StateFlow<List<McpServerConfig>> = _mcpServers.asStateFlow()
+
+    private val _mcpTestingServerIds = MutableStateFlow<Set<String>>(emptySet())
+    val mcpTestingServerIds: StateFlow<Set<String>> = _mcpTestingServerIds.asStateFlow()
+
+    private val _mcpTestStatuses = MutableStateFlow<Map<String, String>>(emptyMap())
+    val mcpTestStatuses: StateFlow<Map<String, String>> = _mcpTestStatuses.asStateFlow()
 
     fun runTerminalCommand(cmd: String) {
         val command = cmd.trim()
@@ -5494,6 +5520,187 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             current.copy(projectChats = chats)
         }
         preferences.saveProjectChats(project.id, _state.value.projectChats)
+    }
+
+    // ---- Agent Skills & MCP Server Management ----
+
+    private fun syncMcpAndSkillsBridgeAsync() {
+        val activeWorkspace = _state.value.activeProject?.let { runCatching { projectWorkspaceRoot(it) }.getOrNull() }
+        viewModelScope.launch(Dispatchers.IO) {
+            runCatching {
+                McpAndSkillsEngine.stageIsolatedBridgeFiles(getApplication(), activeWorkspace)
+            }
+        }
+    }
+
+    fun updateSkillSettings(transform: (SkillSettings) -> SkillSettings) {
+        val updated = transform(_skillSettings.value)
+        _skillSettings.value = updated
+        preferences.saveSkillSettings(updated)
+        syncMcpAndSkillsBridgeAsync()
+    }
+
+    fun toggleSkillsMaster(enabled: Boolean) {
+        updateSkillSettings { it.copy(masterEnabled = enabled) }
+    }
+
+    fun toggleSkill(skillId: String, enabled: Boolean) {
+        val updated = _skills.value.map { skill ->
+            if (skill.id == skillId) skill.copy(enabled = enabled) else skill
+        }
+        _skills.value = updated
+        preferences.saveSkills(updated)
+        if (enabled && !_skillSettings.value.masterEnabled) {
+            updateSkillSettings { it.copy(masterEnabled = true) }
+        } else {
+            syncMcpAndSkillsBridgeAsync()
+        }
+    }
+
+    fun saveSkill(skill: AgentSkill) {
+        val cleanId = projectSlug(skill.id.ifBlank { skill.name }).ifBlank { "custom-skill" }
+        val normalized = skill.copy(id = cleanId, name = skill.name.trim().ifBlank { cleanId })
+        val existing = _skills.value
+        val updated = if (existing.any { it.id == cleanId }) {
+            existing.map { if (it.id == cleanId) normalized else it }
+        } else {
+            existing + normalized
+        }
+        _skills.value = updated
+        preferences.saveSkills(updated)
+        syncMcpAndSkillsBridgeAsync()
+        _state.update { it.copy(toastMessage = "Saved skill \"${normalized.name}\"") }
+    }
+
+    fun deleteSkill(skillId: String) {
+        val target = _skills.value.firstOrNull { it.id == skillId } ?: return
+        if (target.builtIn) return
+        val updated = _skills.value.filterNot { it.id == skillId }
+        _skills.value = updated
+        preferences.saveSkills(updated)
+        syncMcpAndSkillsBridgeAsync()
+    }
+
+    fun resetBuiltInSkill(skillId: String) {
+        val defaultSkill = BuiltInSkills.findById(skillId) ?: return
+        val updated = _skills.value.map { current ->
+            if (current.id == skillId) defaultSkill.copy(enabled = current.enabled) else current
+        }
+        _skills.value = updated
+        preferences.saveSkills(updated)
+        syncMcpAndSkillsBridgeAsync()
+        _state.update { it.copy(toastMessage = "Reset \"${defaultSkill.name}\" to default") }
+    }
+
+    fun importSkillFromMarkdown(rawMarkdown: String, fallbackName: String = "Imported Skill") {
+        if (rawMarkdown.isBlank()) return
+        val parsed = SkillMarkdownCodec.parseSkillMarkdown(rawMarkdown, fallbackName)
+        saveSkill(parsed)
+    }
+
+    fun importSkillFromUri(uri: Uri) {
+        viewModelScope.launch {
+            val result = withContext(Dispatchers.IO) {
+                runCatching {
+                    val app = getApplication<Application>()
+                    var fileName = "Imported Skill"
+                    app.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
+                        if (cursor.moveToFirst()) {
+                            val idx = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                            if (idx >= 0) fileName = cursor.getString(idx)?.removeSuffix(".md") ?: fileName
+                        }
+                    }
+                    val text = app.contentResolver.openInputStream(uri)?.bufferedReader(Charsets.UTF_8)?.use {
+                        it.readText()
+                    } ?: error("Could not read selected file")
+                    require(text.isNotBlank()) { "Selected skill file is empty" }
+                    SkillMarkdownCodec.parseSkillMarkdown(text, fileName)
+                }
+            }
+            result.onSuccess { skill ->
+                saveSkill(skill)
+            }.onFailure { error ->
+                _state.update { it.copy(toastMessage = error.message ?: "Could not import skill file") }
+            }
+        }
+    }
+
+    fun updateMcpSettings(transform: (McpSettings) -> McpSettings) {
+        val updated = transform(_mcpSettings.value)
+        _mcpSettings.value = updated
+        preferences.saveMcpSettings(updated)
+        syncMcpAndSkillsBridgeAsync()
+    }
+
+    fun toggleMcpMaster(enabled: Boolean) {
+        updateMcpSettings { it.copy(masterEnabled = enabled) }
+    }
+
+    fun toggleMcpServer(serverId: String, enabled: Boolean) {
+        val updated = _mcpServers.value.map { server ->
+            if (server.id == serverId) server.copy(enabled = enabled) else server
+        }
+        _mcpServers.value = updated
+        preferences.saveMcpServers(updated)
+        if (enabled && !_mcpSettings.value.masterEnabled) {
+            updateMcpSettings { it.copy(masterEnabled = true) }
+        } else {
+            syncMcpAndSkillsBridgeAsync()
+        }
+    }
+
+    fun saveMcpServer(server: McpServerConfig) {
+        val cleanId = projectSlug(server.id.ifBlank { server.name }).ifBlank { "custom-mcp" }
+        val normalized = server.copy(id = cleanId, name = server.name.trim().ifBlank { cleanId })
+        val existing = _mcpServers.value
+        val updated = if (existing.any { it.id == cleanId }) {
+            existing.map { if (it.id == cleanId) normalized else it }
+        } else {
+            existing + normalized
+        }
+        _mcpServers.value = updated
+        preferences.saveMcpServers(updated)
+        syncMcpAndSkillsBridgeAsync()
+        _state.update { it.copy(toastMessage = "Saved MCP server \"${normalized.name}\"") }
+    }
+
+    fun deleteMcpServer(serverId: String) {
+        val target = _mcpServers.value.firstOrNull { it.id == serverId } ?: return
+        if (target.builtInPreset) return
+        val updated = _mcpServers.value.filterNot { it.id == serverId }
+        _mcpServers.value = updated
+        _mcpTestStatuses.update { it - serverId }
+        preferences.saveMcpServers(updated)
+        syncMcpAndSkillsBridgeAsync()
+    }
+
+    fun resetBuiltInMcpServer(serverId: String) {
+        val defaultServer = BuiltInMcpServers.findById(serverId) ?: return
+        val updated = _mcpServers.value.map { current ->
+            if (current.id == serverId) defaultServer.copy(enabled = current.enabled) else current
+        }
+        _mcpServers.value = updated
+        preferences.saveMcpServers(updated)
+        syncMcpAndSkillsBridgeAsync()
+        _state.update { it.copy(toastMessage = "Reset \"${defaultServer.name}\" to default") }
+    }
+
+    fun testMcpServerConnection(server: McpServerConfig) {
+        if (server.id in _mcpTestingServerIds.value) return
+        _mcpTestingServerIds.update { it + server.id }
+        _mcpTestStatuses.update { it + (server.id to "Testing MCP server…") }
+        viewModelScope.launch {
+            val result = McpAndSkillsEngine.testMcpServer(installer, server)
+            _mcpTestingServerIds.update { it - server.id }
+            _mcpTestStatuses.update { current ->
+                current + (
+                    server.id to result.fold(
+                        onSuccess = { msg -> "✓ $msg" },
+                        onFailure = { err -> "✗ ${err.message ?: "Connection failed"}" },
+                    )
+                )
+            }
+        }
     }
 
     override fun onCleared() {

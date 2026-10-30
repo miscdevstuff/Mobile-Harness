@@ -500,7 +500,11 @@ class OpencodeRuntimeBridge(
             proot = installed.proot,
             rootfs = installed.rootfs,
             workspace = workspace,
-            environment = opencodeEnvironment(provider, secret),
+            environment = McpAndSkillsEngine.enrichOpencodeEnvironment(
+                context,
+                opencodeEnvironment(provider, secret),
+                activeWorkspaceDir,
+            ),
             guestCommand = command,
             guestWorkspacePath = guestWorkspacePath,
             emulateHardLinks = false,
