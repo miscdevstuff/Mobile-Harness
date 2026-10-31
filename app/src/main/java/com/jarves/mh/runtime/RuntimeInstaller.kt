@@ -183,18 +183,17 @@ class RuntimeInstaller(private val context: Context) {
             rootfsMarker.readTextOrNull() != ROOTFS_VERSION
         ) {
             onProgress(RuntimeInstallProgress(str(R.string.rt_install_preparing_runtime), 0.03f))
-            val archive = obtainRuntimeBundle(
-                CORE_BUNDLE,
-                preferEmbedded = BuildConfig.OFFLINE_RUNTIME_BUNDLES,
+            val archive = obtainUbuntuBaseRootfs(
                 from = 0.03f,
                 to = 0.25f,
-                onProgress,
+                onProgress = onProgress,
             )
             onProgress(RuntimeInstallProgress(str(R.string.rt_install_unpacking_core), 0.28f))
             staging.deleteRecursively()
             staging.mkdirs()
-            extractZstdTar(archive, staging)
+            extractUbuntuBaseArchive(archive, staging)
             stripMacosMetadataArtifacts(staging)
+            configureUbuntuBaseRootfs(staging)
             RootfsRepair.activate(
                 rootfs = rootfs,
                 staging = staging,
@@ -211,11 +210,10 @@ class RuntimeInstaller(private val context: Context) {
         ensureSettingsAndHooks()
 
         // Node.js and Git are always available in the Core runtime. Python,
-        // C/C++, PHP, and Android remain opt-in stacks during onboarding.
-        val coreNeeded = !File(rootfs, "usr/bin/git").exists() || !isSupportedCoreToolsVersion()
-        if (coreNeeded) {
-            installNodeIfNeeded(proot, 0.58f, 0.66f, onProgress)
-        }
+        // C/C++, PHP, Godot, and Android remain opt-in stacks during onboarding.
+        val coreNeeded = !File(rootfs, "usr/bin/git").exists() ||
+            !File(rootfs, "usr/local/bin/node").exists() ||
+            !isSupportedCoreToolsVersion()
         if (systemUpgradeMarker.readTextOrNull() != SYSTEM_UPGRADE_VERSION) {
             runSystemMaintenance(proot, onProgress)
             systemUpgradeMarker.writeText(SYSTEM_UPGRADE_VERSION)
@@ -223,14 +221,17 @@ class RuntimeInstaller(private val context: Context) {
         if (coreNeeded) {
             aptInstall(
                 proot,
-                listOf("git", "ca-certificates", "curl"),
+                listOf("ca-certificates", "curl", "git", "unzip"),
                 str(R.string.rt_install_git_base_tools),
-                0.70f,
+                0.58f,
                 onProgress,
             )
             writeResolver()
             verifyGuest(proot, "git --version", str(R.string.rt_install_verify_failed, "Git"))
+            installNodeIfNeeded(proot, 0.64f, 0.71f, onProgress)
+            verifyGuest(proot, "node --version && npm --version", str(R.string.rt_install_verify_failed, "Node.js"))
             coreToolsMarker.writeText(CORE_TOOLS_VERSION)
+            coreReadyMarker.writeText("1")
         }
 
         val missingStacks = selectedStacks.filterNot(::isStackInstalled)
@@ -860,7 +861,15 @@ class RuntimeInstaller(private val context: Context) {
         onProgress(RuntimeInstallProgress(str(R.string.rt_install_removing_stack, stack.localizedLabel(context)), 0.1f, indeterminate = true))
         when (stack) {
             DevStack.WEB -> Unit
-            DevStack.PYTHON -> removePythonStack()
+            DevStack.PYTHON -> {
+                aptRemove(
+                    runtime.proot,
+                    listOf("python3-pip", "python3-venv"),
+                    0.45f,
+                    onProgress,
+                )
+                removePythonStack()
+            }
             DevStack.ANDROID -> removeAndroidStack()
             DevStack.CPP -> aptRemove(
                 runtime.proot,
@@ -960,7 +969,13 @@ class RuntimeInstaller(private val context: Context) {
                 verifyGuest(proot, "node --version && npm --version", str(R.string.rt_install_verify_failed, "Node.js"))
             }
             DevStack.PYTHON -> {
-                installRuntimeOverlay(PYTHON_BUNDLE, str(R.string.rt_install_python), from, to, onProgress)
+                aptInstall(
+                    proot,
+                    listOf("python3", "python3-pip", "python3-venv"),
+                    str(R.string.rt_install_python),
+                    from,
+                    onProgress,
+                )
                 runCatching {
                     verifyGuest(proot, "python3 --version && pip3 --version", str(R.string.rt_install_verify_failed, "Python"))
                 }.onFailure { error ->
@@ -1460,7 +1475,7 @@ class RuntimeInstaller(private val context: Context) {
                 if (native != null) {
                     native.forEachOutputLine(pollIntervalMs = 80L) { raw ->
                         val line = sanitizeTerminalLine(raw)
-                        if (line.isNotBlank()) {
+                        if (line.isNotBlank() && !isDpkgDatabaseProgressNoise(line)) {
                             collected.appendLine(line)
                             if (collected.length > MAX_COLLECTED_OUTPUT) {
                                 collected.delete(0, collected.length - MAX_COLLECTED_OUTPUT)
@@ -1500,6 +1515,12 @@ class RuntimeInstaller(private val context: Context) {
         .replace(ANSI_ESCAPE, "")
         .filter { it == '\t' || it.code >= 32 }
         .take(MAX_TERMINAL_LINE)
+
+    private fun isDpkgDatabaseProgressNoise(line: String): Boolean {
+        val trimmed = line.trim()
+        return trimmed == "(Reading database ..." ||
+            (trimmed.startsWith("(Reading database ... ") && trimmed.endsWith("%"))
+    }
 
     private suspend fun verifyGuest(proot: File, command: String, failureMessage: String) {
         val verify = process(
@@ -1548,9 +1569,24 @@ class RuntimeInstaller(private val context: Context) {
                     Os.symlink(destination, link.absolutePath)
                 }
             }
-            File(targetRootfs, "usr/bin/env").canExecute() &&
-                File(targetRootfs, "usr/bin/bash").canExecute() &&
-                File(targetRootfs, "lib/ld-linux-aarch64.so.1").exists()
+            repairProotCoreutilsLinks(targetRootfs)
+            listOf("usr/bin/bash", "usr/bin/env", "usr/bin/coreutils", "usr/lib/cargo/bin/coreutils/env").forEach { rel ->
+                val bin = File(targetRootfs, rel)
+                if (bin.exists() && !bin.canExecute()) {
+                    runCatching { Os.chmod(bin.canonicalPath, 0b111101101) }
+                }
+            }
+            val envOk = File(targetRootfs, "usr/bin/env").canExecute()
+            val bashOk = File(targetRootfs, "usr/bin/bash").canExecute()
+            val ldOk = File(targetRootfs, "lib/ld-linux-aarch64.so.1").exists() ||
+                File(targetRootfs, "usr/lib/aarch64-linux-gnu/ld-linux-aarch64.so.1").exists()
+            if (!envOk || !bashOk || !ldOk) {
+                android.util.Log.e(
+                    "RuntimeInstaller",
+                    "Rootfs validation check failed: envOk=$envOk, bashOk=$bashOk, ldOk=$ldOk",
+                )
+            }
+            envOk && bashOk && ldOk
         }.onFailure {
             android.util.Log.e("RuntimeInstaller", "Could not repair Linux compatibility links", it)
         }.getOrDefault(false)
@@ -1674,6 +1710,7 @@ class RuntimeInstaller(private val context: Context) {
                 put("PROOT_LOADER", File(context.applicationInfo.nativeLibraryDir, "libprootloader.so").absolutePath)
                 // Also protects any glibc helper Claude starts later.
                 put("GLIBC_TUNABLES", "glibc.pthread.rseq=0")
+                put("PIP_BREAK_SYSTEM_PACKAGES", "1")
                 putAll(environment)
             },
             cwd = context.filesDir.absolutePath,
@@ -1765,6 +1802,182 @@ printf '%s\n' '{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decis
         File(rootfs, "etc/resolv.conf").writeText(servers.joinToString("\n") { "nameserver $it" } + "\n")
     }
 
+    private suspend fun obtainUbuntuBaseRootfs(
+        from: Float,
+        to: Float,
+        onProgress: suspend (RuntimeInstallProgress) -> Unit,
+    ): File {
+        if (BuildConfig.OFFLINE_RUNTIME_BUNDLES) {
+            return obtainRuntimeBundle(CORE_BUNDLE, preferEmbedded = true, from = from, to = to, onProgress = onProgress)
+        }
+        downloads.mkdirs()
+        val destination = File(downloads, UBUNTU_BASE_FILE_NAME)
+        val downloadingLabel = str(R.string.rt_install_downloading_bundle, "Ubuntu 26.04.1 LTS")
+        val (baseUrl, checksum) = resolveUbuntuBaseUrlAndSha256()
+        downloadVerified("$baseUrl/$UBUNTU_BASE_FILE_NAME", destination, checksum) { downloaded, total ->
+            val ratio = if (total > 0L) downloaded.toFloat() / total else 0f
+            onProgress(RuntimeInstallProgress(downloadingLabel, from + ratio * (to - from), downloaded, total.takeIf { it > 0L }))
+        }
+        return destination
+    }
+
+    private fun resolveUbuntuBaseUrlAndSha256(): Pair<String, String> {
+        for (baseUrl in UBUNTU_BASE_RELEASE_URLS) {
+            val sumsText = runCatching { fetchText("$baseUrl/SHA256SUMS") }.getOrNull() ?: continue
+            val sha = sumsText.lineSequence()
+                .map(String::trim)
+                .firstOrNull { line -> line.endsWith(UBUNTU_BASE_FILE_NAME) }
+                ?.substringBefore(' ')
+                ?.trim()
+                ?.takeIf { it.matches(Regex("[0-9a-fA-F]{64}")) }
+            if (sha != null) return baseUrl to sha
+        }
+        error("Could not fetch SHA256SUMS for $UBUNTU_BASE_FILE_NAME from Canonical cdimage.ubuntu.com")
+    }
+
+    private fun extractUbuntuBaseArchive(archive: File, destination: File) {
+        if (archive.name.endsWith(".tar.zst")) {
+            extractZstdTar(archive, destination)
+        } else {
+            TarArchiveInputStream(
+                GzipCompressorInputStream(BufferedInputStream(archive.inputStream())),
+            ).use { tar -> extractTarStream(tar, destination) }
+        }
+    }
+
+    /**
+     * Applies Termux proot-distro style post-extraction configuration to a clean Ubuntu Base 26.04 rootfs:
+     * creates standard mountpoint directories, registers Android supplemental GIDs (aid_inet 3003),
+     * disables APT's unprivileged _apt sandbox user inside PRoot, writes policy-rc.d, and sets markers.
+     */
+    private fun configureUbuntuBaseRootfs(targetRootfs: File) {
+        listOf(
+            "root",
+            "tmp",
+            "workspace",
+            "pocket-bridge",
+            "run",
+            "run/lock",
+            "var/tmp",
+            "etc/apt/apt.conf.d",
+            "etc/apt/preferences.d",
+            "usr/sbin",
+        ).forEach { rel ->
+            File(targetRootfs, rel).mkdirs()
+        }
+        runCatching { Os.chmod(File(targetRootfs, "tmp").absolutePath, 0b111111111) }
+        runCatching { Os.chmod(File(targetRootfs, "var/tmp").absolutePath, 0b111111111) }
+
+        val hostsFile = File(targetRootfs, "etc/hosts")
+        if (!hostsFile.isFile || hostsFile.length() == 0L) {
+            hostsFile.parentFile?.mkdirs()
+            hostsFile.writeText("127.0.0.1 localhost\n::1 localhost ip6-localhost ip6-loopback\n")
+        }
+
+        val groupFile = File(targetRootfs, "etc/group")
+        if (groupFile.isFile) {
+            val existingGroups = groupFile.readText()
+            val androidGroups = buildString {
+                if ("aid_inet:" !in existingGroups) appendLine("aid_inet:x:3003:root,_apt")
+                if ("aid_net_raw:" !in existingGroups) appendLine("aid_net_raw:x:3004:root,_apt")
+                if ("aid_everybody:" !in existingGroups) appendLine("aid_everybody:x:9997:root,_apt")
+            }
+            if (androidGroups.isNotEmpty()) {
+                groupFile.appendText(androidGroups)
+            }
+        }
+
+        val policyRc = File(targetRootfs, "usr/sbin/policy-rc.d")
+        policyRc.parentFile?.mkdirs()
+        policyRc.writeText("#!/bin/sh\nexit 101\n")
+        runCatching { Os.chmod(policyRc.absolutePath, 0b111101101) }
+
+        val aptProotConf = File(targetRootfs, "etc/apt/apt.conf.d/99pocket-proot")
+        aptProotConf.parentFile?.mkdirs()
+        aptProotConf.writeText(
+            """
+            APT::Sandbox::User "root";
+            Acquire::Languages "none";
+            Dpkg::Use-Pty "0";
+            Dpkg::Options {
+               "--force-confdef";
+               "--force-confold";
+            };
+            """.trimIndent() + "\n",
+        )
+
+        // Prevent apt-get upgrade inside PRoot --link2symlink from replacing /usr/bin/coreutils
+        // with a .l2s.coreutils.dpkg-new* backing file, which triggers rust-coreutils's /proc/self/exe check.
+        val aptPinFile = File(targetRootfs, "etc/apt/preferences.d/99-pocket-proot")
+        aptPinFile.parentFile?.mkdirs()
+        aptPinFile.writeText(
+            """
+            Package: rust-coreutils
+            Pin: release *
+            Pin-Priority: -1
+            """.trimIndent() + "\n",
+        )
+
+        val dpkgStatus = File(targetRootfs, "var/lib/dpkg/status")
+        if (dpkgStatus.isFile) {
+            val statusText = dpkgStatus.readText()
+            val heldStatus = statusText.replace(
+                "Package: rust-coreutils\nStatus: install ok installed",
+                "Package: rust-coreutils\nStatus: hold ok installed",
+            )
+            if (heldStatus != statusText) {
+                dpkgStatus.writeText(heldStatus)
+            }
+        }
+
+        ensureRootfsCompatibilityLinks(targetRootfs)
+        File(targetRootfs, ".pocket-rootfs-version").writeText(ROOTFS_VERSION)
+        File(targetRootfs, ".pocket-runtime-ready").writeText("1")
+    }
+
+    /**
+     * Repairs `/usr/bin/coreutils` if PRoot's `link2symlink` extension ever renamed it to
+     * `/usr/bin/.l2s.coreutils*`, which would otherwise fail `rust-coreutils`'s `/proc/self/exe` name check.
+     */
+    private fun repairProotCoreutilsLinks(targetRootfs: File) {
+        val usrBin = File(targetRootfs, "usr/bin")
+        if (!usrBin.isDirectory) return
+        val coreutilsBin = File(usrBin, "coreutils")
+        val coreutilsPath = coreutilsBin.toPath()
+        val l2sCandidates = usrBin.listFiles { file ->
+            file.name.startsWith(".l2s.coreutils") && file.isFile && !java.nio.file.Files.isSymbolicLink(file.toPath())
+        }?.toList().orEmpty()
+
+        if (java.nio.file.Files.isSymbolicLink(coreutilsPath) || (!coreutilsBin.isFile && l2sCandidates.isNotEmpty())) {
+            val backingFile = l2sCandidates.maxByOrNull(File::length)
+                ?: runCatching { coreutilsBin.canonicalFile }.getOrNull()?.takeIf(File::isFile)
+            if (backingFile != null && backingFile.exists()) {
+                val tempCopy = File(usrBin, "coreutils.pocket-repair")
+                backingFile.inputStream().use { input -> FileOutputStream(tempCopy).use { input.copyTo(it) } }
+                runCatching { Os.chmod(tempCopy.absolutePath, 0b111101101) }
+                if (coreutilsBin.exists() || java.nio.file.Files.isSymbolicLink(coreutilsPath)) {
+                    coreutilsBin.delete()
+                }
+                tempCopy.renameTo(coreutilsBin)
+                l2sCandidates.forEach { it.delete() }
+            }
+        }
+
+        val cargoCoreutilsDir = File(targetRootfs, "usr/lib/cargo/bin/coreutils")
+        if (cargoCoreutilsDir.isDirectory && coreutilsBin.isFile) {
+            cargoCoreutilsDir.listFiles()?.forEach { entry ->
+                val p = entry.toPath()
+                if (java.nio.file.Files.isSymbolicLink(p)) {
+                    val linkDest = runCatching { java.nio.file.Files.readSymbolicLink(p).toString() }.getOrDefault("")
+                    if (linkDest.contains(".l2s.coreutils") || ! entry.exists()) {
+                        entry.delete()
+                        Os.symlink("../../../../bin/coreutils", entry.absolutePath)
+                    }
+                }
+            }
+        }
+    }
+
     private fun extractZstdTar(archive: File, destination: File) {
         TarArchiveInputStream(
             ZstdCompressorInputStream(BufferedInputStream(archive.inputStream())),
@@ -1777,6 +1990,27 @@ printf '%s\n' '{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decis
         ).use { tar -> extractTarStream(tar, destination, stripLeadingDirectory = true) }
     }
 
+    private fun materializeHardLink(target: File, linkTarget: File) {
+        target.parentFile?.mkdirs()
+        if (target.exists() || java.nio.file.Files.isSymbolicLink(target.toPath())) {
+            target.delete()
+        }
+        // For large multi-call binaries (like Ubuntu 26.04's rust-coreutils), create a relative symlink
+        // so we don't duplicate ~1.8 GB of identical binaries across 100+ hardlink entries.
+        if (linkTarget.length() > 65_536L) {
+            val relPath = target.parentFile.canonicalFile.toPath()
+                .relativize(linkTarget.canonicalFile.toPath())
+                .toString()
+            Os.symlink(relPath, target.absolutePath)
+            return
+        }
+        linkTarget.inputStream().use { input -> FileOutputStream(target).use { input.copyTo(it) } }
+        runCatching {
+            val mode = android.system.Os.stat(linkTarget.absolutePath).st_mode and 0b111111111
+            Os.chmod(target.absolutePath, mode)
+        }
+    }
+
     private fun extractTarStream(
         tar: TarArchiveInputStream,
         destination: File,
@@ -1787,14 +2021,23 @@ printf '%s\n' '{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decis
         while (entry != null) {
             val rawName = entry.name.removePrefix("./")
             val cleanName = if (stripLeadingDirectory) rawName.substringAfter('/', "") else rawName
-            if (cleanName.isNotBlank()) {
+            if (cleanName.isNotBlank() && cleanName != "." && !cleanName.startsWith("dev/")) {
                 val target = safeChild(destination, cleanName)
                 when {
                     entry.isDirectory -> target.mkdirs()
                     entry.isSymbolicLink -> {
                         target.parentFile?.mkdirs()
                         if (target.exists() || java.nio.file.Files.isSymbolicLink(target.toPath())) target.delete()
-                        Os.symlink(entry.linkName, target.absolutePath)
+                        val rawLinkTarget = entry.linkName
+                        val effectiveLinkTarget = if (rawLinkTarget.startsWith("/")) {
+                            val trimmed = cleanName.trimEnd('/')
+                            val depth = trimmed.count { it == '/' }
+                            val prefix = "../".repeat(depth)
+                            (prefix + rawLinkTarget.trimStart('/')).ifEmpty { "." }
+                        } else {
+                            rawLinkTarget
+                        }
+                        Os.symlink(effectiveLinkTarget, target.absolutePath)
                     }
                     entry.isLink -> {
                         val rawLink = entry.linkName.removePrefix("./")
@@ -1802,25 +2045,25 @@ printf '%s\n' '{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decis
                         val linkTarget = safeChild(destination, cleanLink)
                         target.parentFile?.mkdirs()
                         if (linkTarget.exists()) {
-                            linkTarget.inputStream().use { input -> FileOutputStream(target).use { input.copyTo(it) } }
+                            materializeHardLink(target, linkTarget)
                         } else {
                             deferredLinks += target to linkTarget
                         }
                     }
                     entry.isFile -> {
                         target.parentFile?.mkdirs()
+                        if (java.nio.file.Files.isSymbolicLink(target.toPath())) target.delete()
                         FileOutputStream(target).use { output -> tar.copyTo(output) }
-                        runCatching { Os.chmod(target.absolutePath, entry.mode and 0b111111111) }
+                        val mode = (entry.mode and 0b111111111).let { m -> if (m == 0) 0b110100100 else m }
+                        runCatching { Os.chmod(target.absolutePath, mode) }
                     }
                 }
             }
             entry = tar.nextEntry
         }
         deferredLinks.forEach { (target, linkTarget) ->
-            require(linkTarget.isFile) { "Archive hard-link target is missing" }
-            target.parentFile?.mkdirs()
-            linkTarget.inputStream().use { input -> FileOutputStream(target).use { input.copyTo(it) } }
-            runCatching { Os.chmod(target.absolutePath, android.system.Os.stat(linkTarget.absolutePath).st_mode) }
+            require(linkTarget.isFile) { "Archive hard-link target is missing: ${linkTarget.path}" }
+            materializeHardLink(target, linkTarget)
         }
     }
 
@@ -1976,12 +2219,17 @@ EOF_MCP
         private const val GITHUB_CLI_RELEASE_SHA256 = "ea4e7a581a32ccad6cc7923cb1576ac5859ba4b9a16ab22eb8f8a96e78e2e961"
         private const val LEGACY_README = "# Pocket Dev project\n\nThis project is managed locally on Android.\n"
         private const val LEGACY_INDEX = "<!doctype html><title>Pocket Dev</title><h1>Hello from Android</h1>\n"
-        private const val ROOTFS_VERSION = "ubuntu-20.04.5-arm64"
+        private const val ROOTFS_VERSION = "ubuntu-26.04.1-arm64-v2"
+        private const val UBUNTU_BASE_FILE_NAME = "ubuntu-base-26.04.1-base-arm64.tar.gz"
+        private val UBUNTU_BASE_RELEASE_URLS = listOf(
+            "https://cdimage.ubuntu.com/ubuntu-base/releases/26.04.1/release",
+            "https://cdimage.ubuntu.com/ubuntu-base/releases/resolute/release",
+        )
         private const val NODE_VERSION = "v24.19.0"
         private const val LANGUAGE_TOOLS_VERSION = "node-v24.19.0-python3-v1"
-        private const val CORE_TOOLS_VERSION = "core-bundle-2026.09.5"
-        private const val LEGACY_CORE_TOOLS_VERSION = "core-bundle-2026.09.4"
-        private const val SYSTEM_UPGRADE_VERSION = "ubuntu-maintenance-v1"
+        private const val CORE_TOOLS_VERSION = "ubuntu-26.04.1-core-tools-v1"
+        private const val LEGACY_CORE_TOOLS_VERSION = "core-bundle-2026.09.5"
+        private const val SYSTEM_UPGRADE_VERSION = "ubuntu-26.04.1-maintenance-v1"
         private const val ANDROID_TOOLS_VERSION = "sdk36-build-tools35-gradle8.14.3-maven-2026.09"
         private const val ANDROID_AAPT2_PROPERTY = "android.aapt2FromMavenOverride"
         private const val GRADLE_JVMARGS_PROPERTY = "org.gradle.jvmargs"
