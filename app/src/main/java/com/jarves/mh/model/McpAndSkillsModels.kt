@@ -83,10 +83,10 @@ data class AgentSkill(
  */
 @Serializable
 enum class McpTransportType {
-    /** Remote HTTP / Streamable HTTP / SSE MCP server via URL (e.g. Termux localhost or external server). */
-    REMOTE,
     /** Local stdio MCP server spawned inside the PRoot Ubuntu container. */
     LOCAL_STDIO,
+    /** Remote HTTP / Streamable HTTP / SSE MCP server via URL. */
+    REMOTE,
 }
 
 /**
@@ -94,12 +94,12 @@ enum class McpTransportType {
  */
 @Serializable
 enum class McpLocalityMode {
-    /** Automatically infer: [McpTransportType.REMOTE] -> Remote tools only; [McpTransportType.LOCAL_STDIO] -> Local in container. */
+    /** Automatically infer: [McpTransportType.LOCAL_STDIO] -> Local in container; [McpTransportType.REMOTE] -> Remote tools only. */
     AUTO_BY_TRANSPORT,
-    /** Tools are hosted remotely (e.g. Termux or cloud); underlying binaries are NOT installed in PRoot PATH. */
-    REMOTE_TOOLS_ONLY,
     /** Tools and underlying binaries ARE installed locally inside the PRoot Ubuntu container. */
     LOCAL_IN_CONTAINER,
+    /** Tools are hosted remotely; underlying binaries are NOT installed in PRoot PATH. */
+    REMOTE_TOOLS_ONLY,
 }
 
 @Immutable
@@ -117,10 +117,10 @@ data class McpServerConfig(
     val description: String = "",
     val enabled: Boolean = false,
     val builtInPreset: Boolean = false,
-    val transport: McpTransportType = McpTransportType.REMOTE,
+    val transport: McpTransportType = McpTransportType.LOCAL_STDIO,
     val localityMode: McpLocalityMode = McpLocalityMode.AUTO_BY_TRANSPORT,
     // Remote (HTTP / SSE) configuration
-    val url: String = "http://127.0.0.1:6505/mcp",
+    val url: String = "",
     val headers: Map<String, String> = emptyMap(),
     val disableOAuth: Boolean = true,
     // Local (PRoot stdio) configuration
@@ -132,7 +132,6 @@ data class McpServerConfig(
     val protocolVersion: String = "auto",
     val timeoutMs: Int = 30_000,
     val usageHint: String = "",
-    val termuxHelperCommand: String = "",
 ) {
     val isEffectivelyRemote: Boolean
         get() = when (localityMode) {
@@ -149,7 +148,7 @@ data class McpServerConfig(
         if (isEffectivelyRemote) {
             append("- MCP Server `$id` ($name) — [REMOTE MCP SERVER | TOOLS ONLY | NO LOCAL BINARY]: ")
             append("Connected remotely via `${url.trim()}`. ")
-            append("The underlying runtime/binaries for `$name` are hosted externally (e.g. Termux or remote host) and are NOT installed in this container's local PATH. ")
+            append("The underlying runtime/binaries for `$name` are hosted externally and are NOT installed in this container's local PATH. ")
             append("Do NOT attempt to invoke its binaries directly via the `Bash` tool; call the `$id` MCP tools exclusively.")
         } else {
             val cmdPreview = command.joinToString(" ").ifBlank { id }
@@ -165,42 +164,91 @@ data class McpServerConfig(
 }
 
 /**
- * Built-in starter skills for Godot 4 and Android (all disabled by default).
+ * Built-in starter skills for Free-Model Reliability, Godot 4.7, and Android SDK 36 (all disabled by default).
  */
 object BuiltInSkills {
+    const val PRECISION_CODER_SKILL_ID = "free-model-precision-coder"
     const val GODOT_4_SKILL_ID = "godot-4-gdscript"
+    const val GODOT_SCENE_SKILL_ID = "godot-4-scene-architect"
     const val ANDROID_SDK_SKILL_ID = "android-arm64-sdk"
+
+    val PRECISION_CODER_SKILL = AgentSkill(
+        id = PRECISION_CODER_SKILL_ID,
+        name = "Free-Model Precision Coder",
+        description = "Eliminates lazy code truncation, blind edits, and tool-call loops on free and lightweight coding models.",
+        enabled = false,
+        builtIn = true,
+        activationMode = SkillActivationMode.ALWAYS_WHEN_ENABLED,
+        filePatterns = emptyList(),
+        triggerKeywords = emptyList(),
+        content = """# Free-Model Precision Execution Rules
+
+## 1. Zero Truncation or Placeholders
+- NEVER write `// ... existing code ...`, `# ... rest of script ...`, or `// TODO: implement` when writing or editing files.
+- Always write complete, syntactically valid functions and files.
+
+## 2. Inspect Before Modifying
+- Before editing an existing file, always read it first so imports, indentation, and symbol names match the real codebase.
+- Before creating new files, list the directory structure to avoid duplicate or misplaced files.
+
+## 3. Fail-Fast Verification & No Blind Retry Loops
+- If a shell command or tool call fails twice in a row with the same error, STOP repeating the identical command. Read the error message, inspect the relevant file or config, and change your approach.
+- After making code edits, run the fastest available syntax/compile check before finishing your turn.
+""".trimIndent(),
+    )
 
     val GODOT_4_SKILL = AgentSkill(
         id = GODOT_4_SKILL_ID,
-        name = "Godot 4 & GDScript 2.0",
-        description = "Strict Godot 4.x syntax guardrails, .tscn/project.godot serialization rules, and remote/local MCP workflow for free models.",
+        name = "Godot 4.7 & GDScript 2.0",
+        description = "Strict Godot 4.7 syntax guardrails, typed GDScript 2.0 rules, .tscn serialization, and local headless verification.",
         enabled = false,
         builtIn = true,
         activationMode = SkillActivationMode.ALWAYS_WHEN_ENABLED,
         filePatterns = listOf("project.godot", "*.gd", "*.tscn", "*.tres"),
         triggerKeywords = listOf("godot", "gdscript", ".tscn", "node2d", "node3d", "characterbody"),
-        content = """# Godot 4.x & GDScript 2.0 Engineering Rules
+        content = """# Godot 4.7 & GDScript 2.0 Engineering Rules
 
-## 1. Strict GDScript 2.0 (Godot 4) Syntax — Never Use Godot 3 Syntax
+## 1. Strict GDScript 2.0 (Godot 4.7) Syntax — Never Use Godot 3 Syntax
 - **Annotations:** Use `@export var speed: float = 200.0` and `@onready var sprite: Sprite2D = ${'$'}Sprite2D` (NEVER `export` or `onready` keywords).
 - **Coroutines & Signals:** Use `await signal_name` (NEVER `yield(obj, "signal")`). Connect signals via `button.pressed.connect(_on_button_pressed)` (NEVER `connect("pressed", self, "_on_button_pressed")`).
 - **Physics & Movement:** Use `CharacterBody2D` / `CharacterBody3D`, assign `velocity = ...`, and call `move_and_slide()` with zero arguments (NEVER `KinematicBody2D` or `velocity = move_and_slide(velocity)`).
 - **Instantiation:** Call `packed_scene.instantiate()` (NEVER `.instance()`).
 - **File & Directory I/O:** Use `FileAccess.open(path, FileAccess.ModeFlags.READ)` and `DirAccess.open(path)` (NEVER `File.new()` or `Directory.new()`).
 - **Tweens:** Create tweens via `var tween := create_tween()` (NEVER add a `Tween.new()` node).
-- **Static Typing:** Always add explicit type annotations (`var items: Array[String] = []`, `func calc(delta: float) -> void:`) to prevent runtime type errors.
+- **Static Typing:** Always use explicit type annotations for variables, arrays (`Array[Node2D]`), dictionaries (`Dictionary[String, int]`), and return types (`func calc(delta: float) -> void:`).
 
 ## 2. Scene (`.tscn`) & `project.godot` File Integrity
 - `project.godot` must use `config_version=5`.
 - `.tscn` files must start with `[gd_scene load_steps=... format=3]`.
-- Keep `[ext_resource]` definitions at the top, followed by `[sub_resource]`, then `[node]` blocks, and `[connection]` blocks at the bottom.
-- Never invent random UIDs (`uid://...`); omit the `uid` attribute when creating new `.tscn` files by hand so Godot generates a valid UID on load.
+- Order sections strictly: `[ext_resource]` -> `[sub_resource]` -> `[node]` -> `[connection]`.
+- Never invent random `uid://...` strings; omit the `uid` attribute when hand-authoring new `.tscn` files so Godot assigns a valid UID.
 
-## 3. Tool & Locality Awareness (Remote MCP vs. Local Container)
-- Check `<mcp_environment>` in this prompt before running shell commands:
-  - If `godot-mcp` is marked **[REMOTE MCP SERVER]**, the Godot binary is running externally (e.g., in Termux) and is NOT in the local container `PATH`. Use the `godot-mcp` tools to inspect scenes, nodes, and scripts; do NOT run `godot` in `Bash`.
-  - If `godot-mcp` is marked **[LOCAL CONTAINER MCP SERVER]** (or if `/usr/local/bin/godot` exists), you can also verify scripts headlessly via `godot --headless --audio-driver Dummy --check-only -s res://path/to/script.gd`.
+## 3. Local Godot 4.7 Toolchain & MCP Workflow
+- When `godot-mcp` is enabled in `<mcp_environment>`, prefer `godot-mcp` tools for inspecting and modifying scenes, nodes, and project settings.
+- When `/usr/local/bin/godot` is installed in the container (`DevStack.GODOT`), validate modified GDScript files headlessly before finishing:
+  `godot --headless --audio-driver Dummy --check-only --script res://path/to/script.gd`
+""".trimIndent(),
+    )
+
+    val GODOT_SCENE_SKILL = AgentSkill(
+        id = GODOT_SCENE_SKILL_ID,
+        name = "Godot 4 Scene, Physics & UI Architect",
+        description = "Blueprints for 2D/3D node hierarchies, CharacterBody physics, Camera/UI CanvasLayer layouts, and InputMap setup.",
+        enabled = false,
+        builtIn = true,
+        activationMode = SkillActivationMode.AUTO_DETECT,
+        filePatterns = listOf("project.godot", "*.tscn", "*.gd"),
+        triggerKeywords = listOf("scene", "player", "camera", "ui", "hud", "collision", "tilemap", "control"),
+        content = """# Godot 4 Scene, Physics & UI Architecture
+
+## 1. Standard Node Hierarchies
+- **2D/3D Character (`CharacterBody2D` / `CharacterBody3D`):** Always include a `CollisionShape2D`/`3D` child with a concrete shape resource (`CapsuleShape2D`, `RectangleShape2D`, etc.) and a visual child (`Sprite2D`, `AnimatedSprite2D`, or `MeshInstance3D`).
+- **HUD & Menus:** Place UI inside a `CanvasLayer` -> root `Control` (`anchors_preset = 15` for full-rect) -> layout containers (`MarginContainer`, `VBoxContainer`, `HBoxContainer`, `PanelContainer`) rather than hardcoding pixel coordinates.
+
+## 2. Physics & Frame Loop Discipline
+- Put movement, velocity math, and `move_and_slide()` inside `_physics_process(delta: float) -> void`.
+- Apply gravity in 2D using `if not is_on_floor(): velocity += get_gravity() * delta`.
+- Use `Input.get_axis("move_left", "move_right")` or `Input.get_vector(...)` for smooth movement, and ensure matching actions exist under `[input]` in `project.godot`.
 """.trimIndent(),
     )
 
@@ -226,11 +274,16 @@ object BuiltInSkills {
 - Use `androidx.compose.material3` components (`Scaffold`, `Surface`, `TopAppBar`, `ModalBottomSheet`).
 - Use `Icons.AutoMirrored.Filled.*` for directional icons (`ArrowBack`, `ArrowForward`, `Send`, `Chat`, `Undo`, `Redo`).
 - Expose UI state via `StateFlow<UiState>` from `ViewModel` and collect with `collectAsStateWithLifecycle()`.
-- Write complete, compilable Kotlin files without placeholder comments like `// TODO: implement rest of file`.
+- Write complete, compilable Kotlin files without placeholder comments.
 """.trimIndent(),
     )
 
-    fun all(): List<AgentSkill> = listOf(GODOT_4_SKILL, ANDROID_SDK_SKILL)
+    fun all(): List<AgentSkill> = listOf(
+        PRECISION_CODER_SKILL,
+        GODOT_4_SKILL,
+        GODOT_SCENE_SKILL,
+        ANDROID_SDK_SKILL,
+    )
 
     fun findById(id: String): AgentSkill? = all().firstOrNull { it.id == id }
 
@@ -241,7 +294,19 @@ object BuiltInSkills {
             byId[builtIn.id] = builtIn
         }
         for (item in saved) {
-            byId[item.id] = item
+            val defaultBuiltIn = findById(item.id)
+            if (defaultBuiltIn != null && item.builtIn) {
+                // Keep user's enabled/activationMode choices while refreshing legacy Termux text in built-in skills
+                val refreshedContent = if (item.content.contains("Termux")) defaultBuiltIn.content else item.content
+                val refreshedDesc = if (item.description.contains("remote/")) defaultBuiltIn.description else item.description
+                byId[item.id] = item.copy(
+                    name = defaultBuiltIn.name,
+                    description = refreshedDesc,
+                    content = refreshedContent,
+                )
+            } else {
+                byId[item.id] = item
+            }
         }
         return byId.values.toList()
     }
@@ -256,12 +321,12 @@ object BuiltInMcpServers {
     val GODOT_MCP_PRESET = McpServerConfig(
         id = GODOT_MCP_ID,
         name = "Godot 4 Engine MCP",
-        description = "Scene, node, script, and project manipulation tools for Godot 4 (supports Termux/Remote URL or Local PRoot).",
+        description = "Local Godot 4.7 scene, node, script, and project manipulation server running inside the PRoot container.",
         enabled = false,
         builtInPreset = true,
-        transport = McpTransportType.REMOTE,
+        transport = McpTransportType.LOCAL_STDIO,
         localityMode = McpLocalityMode.AUTO_BY_TRANSPORT,
-        url = "http://127.0.0.1:6505/mcp",
+        url = "",
         headers = emptyMap(),
         disableOAuth = true,
         command = listOf("/usr/local/bin/node", "/usr/local/lib/godot-mcp/build/index.js"),
@@ -270,7 +335,6 @@ object BuiltInMcpServers {
         protocolVersion = "auto",
         timeoutMs = 30_000,
         usageHint = "Prefer godot-mcp tools for inspecting and editing Godot scenes (.tscn), nodes, signals, and project settings.",
-        termuxHelperCommand = "pkg install -y godot nodejs && npx -y @coding-solo/godot-mcp --port 6505",
     )
 
     fun all(): List<McpServerConfig> = listOf(GODOT_MCP_PRESET)
@@ -284,7 +348,12 @@ object BuiltInMcpServers {
             byId[preset.id] = preset
         }
         for (item in saved) {
-            byId[item.id] = item
+            if (item.id == GODOT_MCP_ID && item.builtInPreset && item.url == "http://127.0.0.1:6505/mcp") {
+                // Migrate legacy Termux remote default to the new Local PRoot default
+                byId[item.id] = GODOT_MCP_PRESET.copy(enabled = item.enabled)
+            } else {
+                byId[item.id] = item
+            }
         }
         return byId.values.toList()
     }

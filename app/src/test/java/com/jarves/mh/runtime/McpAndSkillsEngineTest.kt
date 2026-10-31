@@ -52,6 +52,6 @@ class McpAndSkillsEngineTest {
         assertTrue(block.contains("<mcp_environment>"))
         assertTrue(block.contains("REMOTE MCP SERVER | TOOLS ONLY | NO LOCAL BINARY"))
         assertTrue(block.contains("<active_skills>"))
-        assertTrue(block.contains("Godot 4 & GDScript 2.0"))
+        assertTrue(block.contains("Godot 4.7 & GDScript 2.0"))
     }
 }

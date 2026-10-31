@@ -1921,11 +1921,11 @@ printf '%s\n' '{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decis
             apt-get update -y
             apt-get install -y --no-install-recommends ca-certificates curl unzip coreutils libfontconfig1 libfreetype6 libgl1 libx11-6 libxcursor1 libxinerama1 libxi6 libxrandr2 libxrender1
             mkdir -p /tmp/godot-install /usr/local/bin /usr/local/lib/godot-mcp/build
-            curl -fL --retry 3 -o /tmp/godot-install/SHA512-SUMS.txt https://github.com/godotengine/godot/releases/download/4.3-stable/SHA512-SUMS.txt
-            curl -fL --retry 3 -o /tmp/godot-install/Godot_v4.3-stable_linux.arm64.zip https://github.com/godotengine/godot/releases/download/4.3-stable/Godot_v4.3-stable_linux.arm64.zip
-            (cd /tmp/godot-install && grep -F "  Godot_v4.3-stable_linux.arm64.zip" SHA512-SUMS.txt | sha512sum -c -)
-            unzip -o /tmp/godot-install/Godot_v4.3-stable_linux.arm64.zip -d /tmp/godot-install
-            mv /tmp/godot-install/Godot_v4.3-stable_linux.arm64 /usr/local/bin/godot
+            curl -fL --retry 3 -o /tmp/godot-install/SHA512-SUMS.txt https://github.com/godotengine/godot/releases/download/4.7.2-stable/SHA512-SUMS.txt
+            curl -fL --retry 3 -o /tmp/godot-install/Godot_v4.7.2-stable_linux.arm64.zip https://github.com/godotengine/godot/releases/download/4.7.2-stable/Godot_v4.7.2-stable_linux.arm64.zip
+            (cd /tmp/godot-install && grep -F "  Godot_v4.7.2-stable_linux.arm64.zip" SHA512-SUMS.txt | sha512sum -c -)
+            unzip -o /tmp/godot-install/Godot_v4.7.2-stable_linux.arm64.zip -d /tmp/godot-install
+            mv /tmp/godot-install/Godot_v4.7.2-stable_linux.arm64 /usr/local/bin/godot
             chmod 755 /usr/local/bin/godot
             rm -rf /tmp/godot-install
             npm install --prefix /usr/local/lib/godot-mcp @coding-solo/godot-mcp

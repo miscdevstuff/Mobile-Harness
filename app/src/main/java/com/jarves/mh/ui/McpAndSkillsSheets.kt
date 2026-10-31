@@ -32,8 +32,6 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.ContentCopy
-import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Dns
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.KeyboardArrowDown
@@ -59,14 +57,11 @@ import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalClipboardManager
-import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -123,6 +118,7 @@ fun SkillsManagerSheet(
             contentPadding = PaddingValues(bottom = 28.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
+            // Sheet Header
             item {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -138,13 +134,30 @@ fun SkillsManagerSheet(
                     }
                     Spacer(Modifier.width(12.dp))
                     Column(Modifier.weight(1f)) {
-                        Text("Agent Skills", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
                         Text(
-                            "Context rules & syntax guardrails · Isolated in /pocket-bridge/opencode",
+                            "Agent Skills",
+                            style = MaterialTheme.typography.titleLarge,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        Text(
+                            "Context rules & guardrails",
                             fontSize = 11.5.sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        Text(
+                            "/pocket-bridge/opencode/skills",
+                            fontSize = 10.5.sp,
+                            fontFamily = FontFamily.Monospace,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
                         )
                     }
+                    Spacer(Modifier.width(8.dp))
                     StatusPill(
                         active = settings.masterEnabled && activeCount > 0,
                         label = if (!settings.masterEnabled) "OFF" else "$activeCount ACTIVE",
@@ -176,6 +189,7 @@ fun SkillsManagerSheet(
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
+                        Spacer(Modifier.width(12.dp))
                         Switch(
                             checked = settings.masterEnabled,
                             onCheckedChange = onToggleMaster,
@@ -202,11 +216,12 @@ fun SkillsManagerSheet(
                             Column(Modifier.weight(1f)) {
                                 Text("Free-Model Booster & Injection Settings", fontWeight = FontWeight.Bold, fontSize = 13.5.sp)
                                 Text(
-                                    "Preload mode, read-before-edit guardrails & token budget (${settings.maxSkillContextChars / 1000}K chars)",
+                                    "Preload mode, edit guardrails & budget (${settings.maxSkillContextChars / 1000}K chars)",
                                     fontSize = 11.sp,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
                             }
+                            Spacer(Modifier.width(8.dp))
                             Icon(
                                 if (boostersExpanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
                                 contentDescription = null,
@@ -257,7 +272,7 @@ fun SkillsManagerSheet(
                                         FilterChip(
                                             selected = settings.maxSkillContextChars == budget,
                                             onClick = { onUpdateSettings { it.copy(maxSkillContextChars = budget) } },
-                                            label = { Text(label, fontSize = 11.sp) },
+                                            label = { Text(label, fontSize = 11.sp, maxLines = 1, softWrap = false) },
                                         )
                                     }
                                 }
@@ -267,7 +282,7 @@ fun SkillsManagerSheet(
                 }
             }
 
-            // Actions Row (+ New Skill / Import .md)
+            // Actions Row (+ New Skill / Import .md) — matched 42.dp height & single-line labels
             item {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -278,21 +293,23 @@ fun SkillsManagerSheet(
                             creatingNewSkill = true
                             editingSkillId = null
                         },
-                        modifier = Modifier.weight(1f),
+                        modifier = Modifier.weight(1f).height(42.dp),
                         shape = RoundedCornerShape(12.dp),
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
                     ) {
-                        Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(17.dp))
+                        Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
                         Spacer(Modifier.width(6.dp))
-                        Text("New Skill", fontSize = 12.5.sp, fontWeight = FontWeight.SemiBold)
+                        Text("New Skill", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, softWrap = false)
                     }
                     OutlinedButton(
                         onClick = { importLauncher.launch(arrayOf("text/*", "*/*")) },
-                        modifier = Modifier.weight(1f),
+                        modifier = Modifier.weight(1f).height(42.dp),
                         shape = RoundedCornerShape(12.dp),
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
                     ) {
-                        Icon(Icons.Default.Upload, contentDescription = null, modifier = Modifier.size(17.dp))
+                        Icon(Icons.Default.Upload, contentDescription = null, modifier = Modifier.size(16.dp))
                         Spacer(Modifier.width(6.dp))
-                        Text("Import SKILL.md", fontSize = 12.5.sp, fontWeight = FontWeight.SemiBold)
+                        Text("Import .md", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, softWrap = false)
                     }
                 }
             }
@@ -378,58 +395,94 @@ private fun SkillSummaryCard(
             .fillMaxWidth()
             .clickable(onClick = onEdit),
     ) {
-        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Text(skill.name, fontWeight = FontWeight.Bold, fontSize = 14.sp)
-                        MiniBadge(
-                            text = if (skill.builtIn) "BUILT-IN" else "CUSTOM",
-                            color = if (skill.builtIn) PocketOrange else MaterialTheme.colorScheme.primary,
-                        )
-                    }
-                    Text(
-                        skill.id,
-                        fontSize = 11.sp,
-                        fontFamily = FontFamily.Monospace,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
+        Column(
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            // Row 1: Title + Edit Icon + Switch (no badge competing for width)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = skill.name,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 14.5.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
+                )
+                Spacer(Modifier.width(6.dp))
                 IconButton(onClick = onEdit, modifier = Modifier.size(32.dp)) {
                     Icon(Icons.Default.Edit, contentDescription = "Configure skill", modifier = Modifier.size(17.dp))
                 }
+                Spacer(Modifier.width(2.dp))
                 Switch(
                     checked = skill.enabled,
                     onCheckedChange = onToggle,
                 )
             }
+
+            // Row 2: Non-wrapping Badge + Monospace ID
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                MiniBadge(
+                    text = if (skill.builtIn) "BUILT-IN" else "CUSTOM",
+                    color = if (skill.builtIn) PocketOrange else MaterialTheme.colorScheme.primary,
+                )
+                Text(
+                    text = skill.id,
+                    fontSize = 11.sp,
+                    fontFamily = FontFamily.Monospace,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
+                )
+            }
+
+            // Row 3: Description
             if (skill.description.isNotBlank()) {
                 Text(
-                    skill.description,
+                    text = skill.description,
                     fontSize = 12.sp,
+                    lineHeight = 16.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                 )
             }
+
+            // Row 4: Mode & File Triggers
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 val modeLabel = when (skill.activationMode) {
                     SkillActivationMode.ALWAYS_WHEN_ENABLED -> "Mode: Always Preload"
                     SkillActivationMode.AUTO_DETECT -> "Mode: Auto-Detect"
-                    SkillActivationMode.NATIVE_ONLY -> "Mode: Native (.opencode/skills)"
+                    SkillActivationMode.NATIVE_ONLY -> "Mode: Native Only"
                 }
-                Text(modeLabel, fontSize = 10.5.sp, color = PocketOrange, fontWeight = FontWeight.SemiBold)
+                Text(
+                    text = modeLabel,
+                    fontSize = 10.5.sp,
+                    color = PocketOrange,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    softWrap = false,
+                )
                 if (skill.filePatterns.isNotEmpty()) {
                     Text(
-                        "· Files: ${skill.filePatterns.take(3).joinToString(", ")}",
+                        text = "· Files: ${skill.filePatterns.take(3).joinToString(", ")}",
                         fontSize = 10.5.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f),
                     )
                 }
             }
@@ -466,6 +519,8 @@ private fun SkillEditorCard(
                     if (isNew) "Create Custom Skill" else "Configure Skill: ${initial.name}",
                     fontWeight = FontWeight.Bold,
                     fontSize = 14.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f),
                 )
                 IconButton(onClick = onCancel, modifier = Modifier.size(28.dp)) {
@@ -503,17 +558,17 @@ private fun SkillEditorCard(
                 FilterChip(
                     selected = mode == SkillActivationMode.ALWAYS_WHEN_ENABLED,
                     onClick = { mode = SkillActivationMode.ALWAYS_WHEN_ENABLED },
-                    label = { Text("Always Preload (Best for Free Models)", fontSize = 11.sp) },
+                    label = { Text("Always Preload (Best for Free Models)", fontSize = 11.sp, maxLines = 1, softWrap = false) },
                 )
                 FilterChip(
                     selected = mode == SkillActivationMode.AUTO_DETECT,
                     onClick = { mode = SkillActivationMode.AUTO_DETECT },
-                    label = { Text("Auto-Detect by Files/Keywords", fontSize = 11.sp) },
+                    label = { Text("Auto-Detect by Files/Keywords", fontSize = 11.sp, maxLines = 1, softWrap = false) },
                 )
                 FilterChip(
                     selected = mode == SkillActivationMode.NATIVE_ONLY,
                     onClick = { mode = SkillActivationMode.NATIVE_ONLY },
-                    label = { Text("OpenCode Native Only", fontSize = 11.sp) },
+                    label = { Text("OpenCode Native Only", fontSize = 11.sp, maxLines = 1, softWrap = false) },
                 )
             }
             OutlinedTextField(
@@ -626,6 +681,7 @@ fun McpServersSheet(
             contentPadding = PaddingValues(bottom = 28.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
+            // Sheet Header
             item {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -641,14 +697,30 @@ fun McpServersSheet(
                     }
                     Spacer(Modifier.width(12.dp))
                     Column(Modifier.weight(1f)) {
-                        Text("MCP Servers", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
                         Text(
-                            "Isolated config: /pocket-bridge/opencode/opencode.json",
-                            fontSize = 11.sp,
-                            fontFamily = FontFamily.Monospace,
+                            "MCP Servers",
+                            style = MaterialTheme.typography.titleLarge,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        Text(
+                            "Local PRoot stdio & remote HTTP tools",
+                            fontSize = 11.5.sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        Text(
+                            "/pocket-bridge/opencode/opencode.json",
+                            fontSize = 10.5.sp,
+                            fontFamily = FontFamily.Monospace,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
                         )
                     }
+                    Spacer(Modifier.width(8.dp))
                     StatusPill(
                         active = settings.masterEnabled && enabledCount > 0,
                         label = if (!settings.masterEnabled) "OFF" else "$enabledCount ENABLED",
@@ -675,11 +747,12 @@ fun McpServersSheet(
                                 Text("Enable MCP Servers", fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
                                 Text(
                                     if (settings.masterEnabled) "Active servers are passed via OPENCODE_CONFIG without modifying project files"
-                                    else "Disabled by default — turn on to connect Remote or Local MCP servers",
+                                    else "Disabled by default — turn on to connect Local or Remote MCP servers",
                                     fontSize = 11.5.sp,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
                             }
+                            Spacer(Modifier.width(12.dp))
                             Switch(
                                 checked = settings.masterEnabled,
                                 onCheckedChange = onToggleMaster,
@@ -687,8 +760,8 @@ fun McpServersSheet(
                         }
                         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f))
                         BoosterToggleRow(
-                            title = "AI Remote vs. Local Awareness (<mcp_environment>)",
-                            subtitle = "Tells the AI model whether an MCP server's tools are Remote-only (e.g. Termux/external URL with no local binary in PRoot) or Local inside the container.",
+                            title = "AI Locality Awareness (<mcp_environment>)",
+                            subtitle = "Informs the AI whether each MCP server is running locally inside the PRoot container (with local binaries in PATH) or on a remote URL.",
                             checked = settings.injectLocalityPrompt,
                             onCheckedChange = { v -> onUpdateSettings { it.copy(injectLocalityPrompt = v) } },
                         )
@@ -703,12 +776,13 @@ fun McpServersSheet(
                         creatingNewServer = true
                         editingServerId = null
                     },
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier.fillMaxWidth().height(42.dp),
                     shape = RoundedCornerShape(12.dp),
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp),
                 ) {
-                    Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(17.dp))
+                    Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
                     Spacer(Modifier.width(6.dp))
-                    Text("Add Custom MCP Server (Remote URL or Local Stdio)", fontSize = 12.5.sp, fontWeight = FontWeight.SemiBold)
+                    Text("Add Custom MCP Server", fontSize = 12.5.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, softWrap = false)
                 }
             }
 
@@ -721,7 +795,7 @@ fun McpServersSheet(
                             description = "Custom MCP server",
                             enabled = true,
                             builtInPreset = false,
-                            transport = McpTransportType.REMOTE,
+                            transport = McpTransportType.LOCAL_STDIO,
                             localityMode = McpLocalityMode.AUTO_BY_TRANSPORT,
                             url = "http://127.0.0.1:8080/mcp",
                             disableOAuth = true,
@@ -810,26 +884,24 @@ private fun McpServerSummaryCard(
             .fillMaxWidth()
             .clickable(onClick = onEdit),
     ) {
-        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Text(server.name, fontWeight = FontWeight.Bold, fontSize = 14.sp)
-                        MiniBadge(
-                            text = if (isRemote) "REMOTE · TOOLS ONLY" else "LOCAL · IN CONTAINER",
-                            color = if (isRemote) PocketOrange else PocketGreen,
-                        )
-                    }
-                    Text(
-                        if (server.transport == McpTransportType.REMOTE) "${server.id} · ${server.url}"
-                        else "${server.id} · ${server.command.joinToString(" ")}",
-                        fontSize = 11.sp,
-                        fontFamily = FontFamily.Monospace,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
+        Column(
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            // Row 1: Title + Test Icon + Edit Icon + Switch (no badge competing for width)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = server.name,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 14.5.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
+                )
+                Spacer(Modifier.width(4.dp))
                 IconButton(onClick = onTest, enabled = !isTesting, modifier = Modifier.size(32.dp)) {
                     if (isTesting) {
                         CircularProgressIndicator(Modifier.size(15.dp), strokeWidth = 1.8.dp, color = PocketOrange)
@@ -840,24 +912,52 @@ private fun McpServerSummaryCard(
                 IconButton(onClick = onEdit, modifier = Modifier.size(32.dp)) {
                     Icon(Icons.Default.Edit, contentDescription = "Configure MCP server", modifier = Modifier.size(17.dp))
                 }
+                Spacer(Modifier.width(2.dp))
                 Switch(
                     checked = server.enabled,
                     onCheckedChange = onToggle,
                 )
             }
+
+            // Row 2: Non-wrapping Locality Badge + Monospace ID / Target
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                MiniBadge(
+                    text = if (isRemote) "REMOTE · TOOLS ONLY" else "LOCAL · IN CONTAINER",
+                    color = if (isRemote) PocketOrange else PocketGreen,
+                )
+                Text(
+                    text = if (server.transport == McpTransportType.REMOTE) "${server.id} · ${server.url}"
+                    else "${server.id} · ${server.command.joinToString(" ")}",
+                    fontSize = 11.sp,
+                    fontFamily = FontFamily.Monospace,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
+                )
+            }
+
+            // Row 3: Description
             if (server.description.isNotBlank()) {
                 Text(
-                    server.description,
+                    text = server.description,
                     fontSize = 12.sp,
+                    lineHeight = 16.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                 )
             }
+
+            // Row 4: Live Test Status
             if (!testStatus.isNullOrBlank()) {
                 val ok = testStatus.startsWith("✓")
                 Text(
-                    testStatus,
+                    text = testStatus,
                     fontSize = 11.sp,
                     color = if (ok) PocketGreen else if (testStatus.startsWith("✗")) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -879,7 +979,6 @@ private fun McpServerEditorCard(
     onDelete: (() -> Unit)?,
     onReset: (() -> Unit)?,
 ) {
-    val clipboard = LocalClipboardManager.current
     var name by rememberSaveable(initial.id) { mutableStateOf(initial.name) }
     var id by rememberSaveable(initial.id) { mutableStateOf(initial.id) }
     var description by rememberSaveable(initial.id) { mutableStateOf(initial.description) }
@@ -945,6 +1044,8 @@ private fun McpServerEditorCard(
                     if (isNew) "Add Custom MCP Server" else "Configure MCP: ${initial.name}",
                     fontWeight = FontWeight.Bold,
                     fontSize = 14.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f),
                 )
                 IconButton(onClick = onCancel, modifier = Modifier.size(28.dp)) {
@@ -979,74 +1080,32 @@ private fun McpServerEditorCard(
 
             Text("Transport & Execution Mode", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
             Row(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 FilterChip(
-                    selected = transport == McpTransportType.REMOTE,
-                    onClick = { transport = McpTransportType.REMOTE },
-                    label = { Text("Remote URL (Termux / External)", fontSize = 11.5.sp) },
-                    modifier = Modifier.weight(1f),
+                    selected = transport == McpTransportType.LOCAL_STDIO,
+                    onClick = {
+                        transport = McpTransportType.LOCAL_STDIO
+                        if (localityMode == McpLocalityMode.REMOTE_TOOLS_ONLY) {
+                            localityMode = McpLocalityMode.LOCAL_IN_CONTAINER
+                        }
+                    },
+                    label = { Text("Local PRoot (Stdio)", fontSize = 11.5.sp, maxLines = 1, softWrap = false) },
                 )
                 FilterChip(
-                    selected = transport == McpTransportType.LOCAL_STDIO,
-                    onClick = { transport = McpTransportType.LOCAL_STDIO },
-                    label = { Text("Local PRoot (Stdio)", fontSize = 11.5.sp) },
-                    modifier = Modifier.weight(1f),
+                    selected = transport == McpTransportType.REMOTE,
+                    onClick = {
+                        transport = McpTransportType.REMOTE
+                        if (localityMode == McpLocalityMode.LOCAL_IN_CONTAINER) {
+                            localityMode = McpLocalityMode.REMOTE_TOOLS_ONLY
+                        }
+                    },
+                    label = { Text("Remote URL (HTTP / SSE)", fontSize = 11.5.sp, maxLines = 1, softWrap = false) },
                 )
             }
 
-            if (transport == McpTransportType.REMOTE) {
-                OutlinedTextField(
-                    value = url,
-                    onValueChange = { url = it },
-                    label = { Text("Remote MCP Endpoint URL (http:// or https://)") },
-                    placeholder = { Text("http://127.0.0.1:6505/mcp") },
-                    singleLine = true,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                OutlinedTextField(
-                    value = headersText,
-                    onValueChange = { headersText = it },
-                    label = { Text("Custom HTTP Headers (optional, Key: Value per line)") },
-                    placeholder = { Text("Authorization: Bearer sk-...\nX-Custom-Header: value") },
-                    textStyle = androidx.compose.ui.text.TextStyle(fontFamily = FontFamily.Monospace, fontSize = 11.5.sp),
-                    minLines = 2,
-                    maxLines = 4,
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                BoosterToggleRow(
-                    title = "Disable OAuth Handshake (oauth: false)",
-                    subtitle = "Recommended for Termux localhost, self-hosted, and header-authenticated MCP servers.",
-                    checked = disableOAuth,
-                    onCheckedChange = { disableOAuth = it },
-                )
-                if (initial.termuxHelperCommand.isNotBlank()) {
-                    Surface(
-                        shape = RoundedCornerShape(10.dp),
-                        color = MaterialTheme.colorScheme.surface,
-                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)),
-                        modifier = Modifier.fillMaxWidth(),
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Column(Modifier.weight(1f)) {
-                                Text("Termux Launch Command (runs natively outside PRoot):", fontSize = 10.5.sp, fontWeight = FontWeight.SemiBold, color = PocketOrange)
-                                Text(initial.termuxHelperCommand, fontSize = 10.5.sp, fontFamily = FontFamily.Monospace)
-                            }
-                            IconButton(
-                                onClick = { clipboard.setText(AnnotatedString(initial.termuxHelperCommand)) },
-                                modifier = Modifier.size(30.dp),
-                            ) {
-                                Icon(Icons.Default.ContentCopy, contentDescription = "Copy Termux command", modifier = Modifier.size(16.dp))
-                            }
-                        }
-                    }
-                }
-            } else {
+            if (transport == McpTransportType.LOCAL_STDIO) {
                 if (initial.id == "godot-mcp" && !godotStackInstalled) {
                     Surface(
                         shape = RoundedCornerShape(10.dp),
@@ -1054,7 +1113,7 @@ private fun McpServerEditorCard(
                         modifier = Modifier.fillMaxWidth(),
                     ) {
                         Text(
-                            "Local Godot 4 toolchain is not installed in PRoot yet. Install 'Godot 4 (GDScript)' in Settings → Developer tools, or switch to Remote URL mode to use Termux.",
+                            "Local Godot 4.7 toolchain is not installed in PRoot yet. Install 'Godot 4 (GDScript)' in Settings → Developer tools to use local Godot MCP.",
                             fontSize = 11.sp,
                             color = MaterialTheme.colorScheme.onErrorContainer,
                             modifier = Modifier.padding(10.dp),
@@ -1080,6 +1139,32 @@ private fun McpServerEditorCard(
                     maxLines = 4,
                     modifier = Modifier.fillMaxWidth(),
                 )
+            } else {
+                OutlinedTextField(
+                    value = url,
+                    onValueChange = { url = it },
+                    label = { Text("Remote MCP Endpoint URL (http:// or https://)") },
+                    placeholder = { Text("https://example.com/mcp") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                OutlinedTextField(
+                    value = headersText,
+                    onValueChange = { headersText = it },
+                    label = { Text("Custom HTTP Headers (optional, Key: Value per line)") },
+                    placeholder = { Text("Authorization: Bearer sk-...\nX-Custom-Header: value") },
+                    textStyle = androidx.compose.ui.text.TextStyle(fontFamily = FontFamily.Monospace, fontSize = 11.5.sp),
+                    minLines = 2,
+                    maxLines = 4,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                BoosterToggleRow(
+                    title = "Disable OAuth Handshake (oauth: false)",
+                    subtitle = "Recommended for self-hosted and header-authenticated MCP servers.",
+                    checked = disableOAuth,
+                    onCheckedChange = { disableOAuth = it },
+                )
             }
 
             Text("AI Locality Identification", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
@@ -1090,17 +1175,24 @@ private fun McpServerEditorCard(
                 FilterChip(
                     selected = localityMode == McpLocalityMode.AUTO_BY_TRANSPORT,
                     onClick = { localityMode = McpLocalityMode.AUTO_BY_TRANSPORT },
-                    label = { Text("Auto (${if (transport == McpTransportType.REMOTE) "Remote Tools Only" else "Local in Container"})", fontSize = 11.sp) },
-                )
-                FilterChip(
-                    selected = localityMode == McpLocalityMode.REMOTE_TOOLS_ONLY,
-                    onClick = { localityMode = McpLocalityMode.REMOTE_TOOLS_ONLY },
-                    label = { Text("Force Remote (No Local Binary)", fontSize = 11.sp) },
+                    label = {
+                        Text(
+                            "Auto (${if (transport == McpTransportType.REMOTE) "Remote Tools Only" else "Local in Container"})",
+                            fontSize = 11.sp,
+                            maxLines = 1,
+                            softWrap = false,
+                        )
+                    },
                 )
                 FilterChip(
                     selected = localityMode == McpLocalityMode.LOCAL_IN_CONTAINER,
                     onClick = { localityMode = McpLocalityMode.LOCAL_IN_CONTAINER },
-                    label = { Text("Force Local (Binary in PATH)", fontSize = 11.sp) },
+                    label = { Text("Force Local (Binary in PATH)", fontSize = 11.sp, maxLines = 1, softWrap = false) },
+                )
+                FilterChip(
+                    selected = localityMode == McpLocalityMode.REMOTE_TOOLS_ONLY,
+                    onClick = { localityMode = McpLocalityMode.REMOTE_TOOLS_ONLY },
+                    label = { Text("Force Remote (No Local Binary)", fontSize = 11.sp, maxLines = 1, softWrap = false) },
                 )
             }
 
@@ -1156,13 +1248,13 @@ private fun McpServerEditorCard(
                         CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 1.8.dp)
                         Spacer(Modifier.width(6.dp))
                     }
-                    Text("Test", fontSize = 12.sp)
+                    Text("Test", fontSize = 12.sp, maxLines = 1, softWrap = false)
                 }
                 if (onReset != null) {
-                    TextButton(onClick = onReset) { Text("Reset", fontSize = 12.sp) }
+                    TextButton(onClick = onReset) { Text("Reset", fontSize = 12.sp, maxLines = 1, softWrap = false) }
                 }
                 if (onDelete != null) {
-                    TextButton(onClick = onDelete) { Text("Delete", color = MaterialTheme.colorScheme.error, fontSize = 12.sp) }
+                    TextButton(onClick = onDelete) { Text("Delete", color = MaterialTheme.colorScheme.error, fontSize = 12.sp, maxLines = 1, softWrap = false) }
                 }
                 Spacer(Modifier.weight(1f))
                 Button(
@@ -1172,7 +1264,7 @@ private fun McpServerEditorCard(
                 ) {
                     Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp))
                     Spacer(Modifier.width(5.dp))
-                    Text("Save")
+                    Text("Save", maxLines = 1, softWrap = false)
                 }
             }
         }
@@ -1216,7 +1308,14 @@ private fun StatusPill(active: Boolean, label: String) {
         ) {
             Box(Modifier.size(6.dp).background(color, CircleShape))
             Spacer(Modifier.width(5.dp))
-            Text(label, fontSize = 10.sp, fontWeight = FontWeight.Bold, color = color)
+            Text(
+                text = label,
+                fontSize = 10.sp,
+                fontWeight = FontWeight.Bold,
+                color = color,
+                maxLines = 1,
+                softWrap = false,
+            )
         }
     }
 }
@@ -1229,10 +1328,12 @@ private fun MiniBadge(text: String, color: Color) {
     ) {
         Text(
             text = text,
-            fontSize = 9.sp,
+            fontSize = 9.5.sp,
             fontWeight = FontWeight.Bold,
             color = color,
-            modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp),
+            maxLines = 1,
+            softWrap = false,
+            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
         )
     }
 }

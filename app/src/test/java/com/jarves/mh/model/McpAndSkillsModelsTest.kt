@@ -14,6 +14,7 @@ class McpAndSkillsModelsTest {
         assertFalse(mcpSettings.masterEnabled)
         assertTrue(BuiltInSkills.all().all { !it.enabled })
         assertTrue(BuiltInMcpServers.all().all { !it.enabled })
+        assertEquals(McpTransportType.LOCAL_STDIO, BuiltInMcpServers.GODOT_MCP_PRESET.transport)
     }
 
     @Test
