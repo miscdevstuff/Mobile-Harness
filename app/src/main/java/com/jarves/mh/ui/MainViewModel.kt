@@ -576,7 +576,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             githubLogin = preferences.githubLogin.takeIf(String::isNotBlank),
             selectedDevStacks = preferences.selectedDevStacks.mapNotNull { name ->
                 runCatching { DevStack.valueOf(name) }.getOrNull()
-            }.toSet() + DevStack.WEB,
+            }.toSet(),
         ),
     )
 
@@ -2851,7 +2851,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     /** Called from the first-launch tool picker; persists the choice for setup and Settings. */
     fun toggleDevStack(stack: DevStack) {
-        if (stack == DevStack.WEB) return
         val updated = _state.value.selectedDevStacks.toMutableSet().apply {
             if (!add(stack)) remove(stack)
         }
@@ -2932,7 +2931,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     /** Removes an optional toolchain after the Settings confirmation dialog. */
     fun removeDevStack(stack: DevStack) {
-        if (_state.value.devStackInstalling != null || stack == DevStack.WEB) return
+        if (_state.value.devStackInstalling != null) return
         if (_state.value.isRunning || _state.value.projectTerminalRunning) {
             _state.update { it.copy(toastMessage = str(R.string.vm_stop_before_removing_tools)) }
             return

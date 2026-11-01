@@ -1397,7 +1397,7 @@ private fun RuntimeSetupPromptScreen(
                                 fontWeight = FontWeight.SemiBold,
                                 fontSize = 13.5.sp,
                             )
-                            Text("Ubuntu  ·  Node.js  ·  npm  ·  Git", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp)
+                            Text("Ubuntu 26.04 LTS  ·  Git  ·  cURL", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp)
                         }
                         Icon(Icons.Default.Check, stringResource(R.string.tools_included), tint = PocketGreen, modifier = Modifier.size(20.dp))
                     }
@@ -1453,8 +1453,8 @@ private fun RuntimeSetupPromptScreen(
                         DevStack.entries.forEachIndexed { index, stack ->
                             DevStackChoiceRow(
                                 stack = stack,
-                                selected = stack == DevStack.WEB || stack in selectedStacks,
-                                locked = stack == DevStack.WEB,
+                                selected = stack in selectedStacks,
+                                locked = false,
                                 onClick = { onToggleStack(stack) },
                             )
                             if (index != DevStack.entries.lastIndex) {
@@ -1518,18 +1518,21 @@ private fun RuntimeSetupPromptScreen(
     }
 }
 
-private const val CORE_RUNTIME_DOWNLOAD_MB = 69
+private const val CORE_RUNTIME_DOWNLOAD_MB = 34
 private const val CLAUDE_RUNTIME_DOWNLOAD_MB = 72
 private const val DSH_RUNTIME_DOWNLOAD_MB = 27
 private const val AGY_RUNTIME_DOWNLOAD_MB = 40
 private const val OPENCODE_RUNTIME_DOWNLOAD_MB = 35
-private const val PYTHON_RUNTIME_DOWNLOAD_MB = 55
 private const val ANDROID_RUNTIME_DOWNLOAD_MB = 570
 
 @Composable
 private fun setupTimeEstimate(selected: Set<DevStack>): String {
-    var minimumMinutes = 3
-    var maximumMinutes = 5
+    var minimumMinutes = 2
+    var maximumMinutes = 4
+    if (DevStack.WEB in selected) {
+        minimumMinutes += 1
+        maximumMinutes += 2
+    }
     if (DevStack.PYTHON in selected) {
         minimumMinutes += 1
         maximumMinutes += 2
@@ -1555,9 +1558,7 @@ private fun setupTimeEstimate(selected: Set<DevStack>): String {
 
 @Composable
 private fun stackDownloadLabel(stack: DevStack): String = when {
-    stack == DevStack.WEB -> " · " + stringResource(R.string.ws_stack_included)
-    BuildConfig.OFFLINE_RUNTIME_BUNDLES && stack in setOf(DevStack.PYTHON, DevStack.ANDROID) -> " · " + stringResource(R.string.ws_stack_included)
-    !BuildConfig.OFFLINE_RUNTIME_BUNDLES && stack == DevStack.PYTHON -> " · 55 MB"
+    BuildConfig.OFFLINE_RUNTIME_BUNDLES && stack == DevStack.ANDROID -> " · " + stringResource(R.string.ws_stack_included)
     !BuildConfig.OFFLINE_RUNTIME_BUNDLES && stack == DevStack.ANDROID -> " · 570 MB"
     else -> ""
 }
@@ -1572,9 +1573,8 @@ private fun toolchainDownloadSummary(selected: Set<DevStack>, agent: AgentKind):
             AgentKind.ANTIGRAVITY -> AGY_RUNTIME_DOWNLOAD_MB
             AgentKind.OPENCODE -> OPENCODE_RUNTIME_DOWNLOAD_MB
         } +
-        (if (DevStack.PYTHON in selected) PYTHON_RUNTIME_DOWNLOAD_MB else 0) +
         (if (DevStack.ANDROID in selected) ANDROID_RUNTIME_DOWNLOAD_MB else 0)
-    val laterPackages = selected.intersect(setOf(DevStack.CPP, DevStack.PHP, DevStack.GODOT))
+    val laterPackages = selected.intersect(setOf(DevStack.WEB, DevStack.PYTHON, DevStack.CPP, DevStack.PHP, DevStack.GODOT))
     val downloadText = stringResource(R.string.ws_download_total_mb, total)
     val laterText = stringResource(R.string.ws_download_c_php_later)
     val wifiText = stringResource(R.string.ws_download_wifi_recommended)

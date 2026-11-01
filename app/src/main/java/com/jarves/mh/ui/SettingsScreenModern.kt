@@ -273,7 +273,7 @@ fun SettingsScreen(
             }
 
             item {
-                val installedCount = state.installedDevStacks.count { it != DevStack.WEB }
+                val installedCount = state.installedDevStacks.size
                 SettingsAccordion(
                     title = stringResource(R.string.settings_tools),
                     subtitle = stringResource(R.string.tools_subtitle, installedCount),
@@ -295,7 +295,6 @@ fun SettingsScreen(
                             when {
                                 removing -> Text(stringResource(R.string.tools_removing), color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.Bold, fontSize = 12.sp)
                                 installing -> Text("${(state.devStackProgress * 100).toInt()}%", color = PocketOrange, fontWeight = FontWeight.Bold)
-                                installed && stack == DevStack.WEB -> Text(stringResource(R.string.tools_included), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 installed -> TextButton(
                                     onClick = { stackPendingRemoval = stack },
                                     enabled = state.devStackInstalling == null,
@@ -360,13 +359,13 @@ fun SettingsScreen(
             item {
                 SettingsAccordion(
                     title = stringResource(R.string.settings_runtime),
-                    subtitle = "Ubuntu 20.04 PRoot · ARM64",
+                    subtitle = "Ubuntu 26.04.1 LTS PRoot · ARM64",
                     icon = Icons.Default.Terminal,
                     expanded = expanded == SettingsSection.RUNTIME,
                     onClick = { toggle(SettingsSection.RUNTIME) },
                 ) {
                     RuntimeInfoRow(stringResource(R.string.runtime_architecture), "ARM64 (aarch64)")
-                    RuntimeInfoRow(stringResource(R.string.runtime_environment), "Ubuntu 20.04 PRoot")
+                    RuntimeInfoRow(stringResource(R.string.runtime_environment), "Ubuntu 26.04.1 LTS PRoot")
                     RuntimeInfoRow(
                         stringResource(R.string.runtime_active_agent),
                         state.agentKind.localizedTitle() + if (state.installedAgentVersions.containsKey(state.agentKind)) "" else " · " + stringResource(R.string.st_not_installed),

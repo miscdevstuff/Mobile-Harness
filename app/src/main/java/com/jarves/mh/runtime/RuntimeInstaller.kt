@@ -99,7 +99,6 @@ class RuntimeInstaller(private val context: Context) {
             proot.canExecute() &&
             File(rootfs, "usr/bin/bash").exists() &&
             rootfsMarker.readTextOrNull() == ROOTFS_VERSION &&
-            File(rootfs, "usr/local/bin/node").exists() &&
             (legacyLanguageTools || coreToolsReady) &&
             coreReadyMarker.exists()
         if (ready) repairLegacyMacosMetadata()
@@ -209,10 +208,10 @@ class RuntimeInstaller(private val context: Context) {
         migrateLegacyClaudeMarker()
         ensureSettingsAndHooks()
 
-        // Node.js and Git are always available in the Core runtime. Python,
-        // C/C++, PHP, Godot, and Android remain opt-in stacks during onboarding.
+        // Only minimal base tools (Git, cURL, CA certificates, unzip) are installed in the Core runtime.
+        // Node.js/npm (Web), Python, C/C++, PHP, Godot, and Android are all optional or installed by tools that need them.
         val coreNeeded = !File(rootfs, "usr/bin/git").exists() ||
-            !File(rootfs, "usr/local/bin/node").exists() ||
+            !File(rootfs, "usr/bin/curl").exists() ||
             !isSupportedCoreToolsVersion()
         if (systemUpgradeMarker.readTextOrNull() != SYSTEM_UPGRADE_VERSION) {
             runSystemMaintenance(proot, onProgress)
@@ -223,13 +222,11 @@ class RuntimeInstaller(private val context: Context) {
                 proot,
                 listOf("ca-certificates", "curl", "git", "unzip"),
                 str(R.string.rt_install_git_base_tools),
-                0.58f,
+                0.62f,
                 onProgress,
             )
             writeResolver()
             verifyGuest(proot, "git --version", str(R.string.rt_install_verify_failed, "Git"))
-            installNodeIfNeeded(proot, 0.64f, 0.71f, onProgress)
-            verifyGuest(proot, "node --version && npm --version", str(R.string.rt_install_verify_failed, "Node.js"))
             coreToolsMarker.writeText(CORE_TOOLS_VERSION)
             coreReadyMarker.writeText("1")
         }
@@ -307,56 +304,44 @@ class RuntimeInstaller(private val context: Context) {
     val githubCliVersion: String get() = githubCliMarker.readTextOrNull().orEmpty()
 
     fun isGitHubCliInstalled(): Boolean = isInstalled() &&
-        File(rootfs, GITHUB_CLI_GUEST_PATH.removePrefix("/")).canExecute() &&
-        githubCliMarker.readTextOrNull() == GITHUB_CLI_VERSION
+        (File(rootfs, "usr/bin/gh").canExecute() || File(rootfs, GITHUB_CLI_GUEST_PATH.removePrefix("/")).canExecute())
 
-    /** Installs GitHub's official ARM64 CLI on demand; it is not bundled in the APK. */
+    /** Installs GitHub CLI (`gh`) directly from Ubuntu apt on demand. */
     suspend fun ensureGitHubCliInstalled(onProgress: suspend (RuntimeInstallProgress) -> Unit) {
-        if (isGitHubCliInstalled()) return
-        check(!BuildConfig.OFFLINE_RUNTIME_BUNDLES) {
-            str(R.string.rt_install_github_needs_online)
+        if (isGitHubCliInstalled()) {
+            ensureGitHubCliSymlink()
+            return
         }
+        val runtime = installedRuntime()
         writeResolver()
-        downloads.mkdirs()
-        val downloaded = File(downloads, "gh-$GITHUB_CLI_VERSION-linux-arm64.tar.gz")
-        onProgress(RuntimeInstallProgress(str(R.string.rt_install_downloading_github_cli), 0.05f))
-        val githubDownloadLabel = str(R.string.rt_install_downloading_version, "GitHub CLI", GITHUB_CLI_VERSION)
-        downloadVerified(GITHUB_CLI_RELEASE_URL, downloaded, GITHUB_CLI_RELEASE_SHA256) { bytes, total ->
-            val ratio = if (total > 0L) bytes.toFloat() / total else 0f
-            onProgress(
-                RuntimeInstallProgress(
-                    message = githubDownloadLabel,
-                    fraction = 0.05f + ratio * 0.75f,
-                    downloadedBytes = bytes,
-                    totalBytes = total.takeIf { it > 0L },
-                    event = RuntimeInstallEvent.DOWNLOAD,
-                ),
-            )
-        }
-        onProgress(RuntimeInstallProgress(str(R.string.rt_install_installing_version, "GitHub CLI", GITHUB_CLI_VERSION), 0.85f, indeterminate = true))
-        val destination = File(rootfs, GITHUB_CLI_GUEST_PATH.removePrefix("/"))
-        destination.parentFile?.mkdirs()
-        var found = false
-        TarArchiveInputStream(GzipCompressorInputStream(BufferedInputStream(downloaded.inputStream()))).use { archive ->
-            var entry = archive.nextEntry
-            while (entry != null) {
-                if (entry.isFile && entry.name.removePrefix("./").endsWith("/bin/gh")) {
-                    val staged = File(destination.parentFile, ".gh-$GITHUB_CLI_VERSION.installing")
-                    FileOutputStream(staged).use { archive.copyTo(it) }
-                    Os.chmod(staged.absolutePath, 0b111101101)
-                    Os.rename(staged.absolutePath, destination.absolutePath)
-                    found = true
-                    break
-                }
-                entry = archive.nextEntry
-            }
-        }
-        check(found) { "Official GitHub CLI archive did not contain the expected binary" }
-        downloaded.delete()
-        verifyGuest(proot = installedRuntime().proot, command = "$GITHUB_CLI_GUEST_PATH --version", failureMessage = str(R.string.rt_install_verify_failed, "GitHub CLI"))
-        githubCliMarker.writeText(GITHUB_CLI_VERSION)
+        aptInstall(
+            proot = runtime.proot,
+            packages = listOf("ca-certificates", "curl", "git", "gh"),
+            message = str(R.string.rt_install_downloading_github_cli),
+            fraction = 0.45f,
+            onProgress = onProgress,
+        )
+        ensureGitHubCliSymlink()
+        verifyGuest(
+            proot = runtime.proot,
+            command = "gh --version",
+            failureMessage = str(R.string.rt_install_verify_failed, "GitHub CLI"),
+        )
+        githubCliMarker.writeText("apt")
         check(isGitHubCliInstalled()) { "GitHub CLI installation is incomplete" }
         onProgress(RuntimeInstallProgress(str(R.string.rt_install_ready, "GitHub CLI"), 1f))
+    }
+
+    private fun ensureGitHubCliSymlink() {
+        val aptGh = File(rootfs, "usr/bin/gh")
+        val legacyDest = File(rootfs, GITHUB_CLI_GUEST_PATH.removePrefix("/"))
+        if (aptGh.exists()) {
+            legacyDest.parentFile?.mkdirs()
+            if (legacyDest.exists() || java.nio.file.Files.isSymbolicLink(legacyDest.toPath())) {
+                legacyDest.delete()
+            }
+            runCatching { Os.symlink("../../../usr/bin/gh", legacyDest.absolutePath) }
+        }
     }
 
     /**
@@ -509,6 +494,7 @@ class RuntimeInstaller(private val context: Context) {
         }
         val quotedVersion = expectedVersion.replace(Regex("[^0-9A-Za-z.+-]"), "")
         check(quotedVersion == expectedVersion) { "Invalid DeepSeek Harness version" }
+        ensureNodeAndNpmViaApt(runtime.proot, 0.25f, onProgress)
         runGuestCommand(
             proot = runtime.proot,
             command = "set -e; next=/usr/local/lib/dsh.updating; " +
@@ -640,6 +626,13 @@ class RuntimeInstaller(private val context: Context) {
     ) {
         migrateLegacyClaudeMarker()
         if (isAgentInstalled(com.jarves.mh.model.AgentKind.CLAUDE_CODE)) return
+        aptInstall(
+            proot = proot,
+            packages = listOf("ca-certificates", "curl", "git", "ripgrep"),
+            message = str(R.string.rt_install_git_base_tools),
+            fraction = fraction,
+            onProgress = onProgress,
+        )
         installRuntimeOverlay(
             bundle = CLAUDE_BUNDLE,
             message = str(R.string.rt_install_installing_version, "Claude Code", CLAUDE_BUNDLED_VERSION),
@@ -679,6 +672,7 @@ class RuntimeInstaller(private val context: Context) {
         fraction: Float,
         onProgress: suspend (RuntimeInstallProgress) -> Unit,
     ) {
+        ensureNodeAndNpmViaApt(proot, fraction, onProgress)
         if (isAgentInstalled(com.jarves.mh.model.AgentKind.DEEPSEEK_HARNESS)) {
             ensureDshAndroidCompatibility()
             return
@@ -717,15 +711,13 @@ class RuntimeInstaller(private val context: Context) {
     ) {
         if (isAgentInstalled(com.jarves.mh.model.AgentKind.OPENCODE)) return
         writeResolver()
-        if (!File(rootfs, "usr/bin/curl").canExecute()) {
-            aptInstall(
-                proot = proot,
-                packages = listOf("curl", "ca-certificates"),
-                message = str(R.string.rt_install_git_base_tools),
-                fraction = fraction,
-                onProgress = onProgress,
-            )
-        }
+        aptInstall(
+            proot = proot,
+            packages = listOf("ca-certificates", "curl", "git", "unzip", "ripgrep"),
+            message = str(R.string.rt_install_git_base_tools),
+            fraction = fraction,
+            onProgress = onProgress,
+        )
         onProgress(RuntimeInstallProgress(str(R.string.rt_install_installing_named, "OpenCode"), fraction, indeterminate = true))
         runGuestCommand(
             proot = proot,
@@ -854,13 +846,28 @@ class RuntimeInstaller(private val context: Context) {
         stack: DevStack,
         onProgress: suspend (RuntimeInstallProgress) -> Unit,
     ) {
-        require(stack != DevStack.WEB) { str(R.string.rt_install_web_not_removable) }
         val runtime = installedRuntime()
         if (!isStackInstalled(stack)) return
 
         onProgress(RuntimeInstallProgress(str(R.string.rt_install_removing_stack, stack.localizedLabel(context)), 0.1f, indeterminate = true))
         when (stack) {
-            DevStack.WEB -> Unit
+            DevStack.WEB -> {
+                val neededByOtherInstalledRuntime =
+                    isStackInstalled(DevStack.GODOT) ||
+                        isAgentInstalled(com.jarves.mh.model.AgentKind.DEEPSEEK_HARNESS)
+                if (!neededByOtherInstalledRuntime) {
+                    aptRemove(
+                        runtime.proot,
+                        listOf("nodejs", "npm"),
+                        0.45f,
+                        onProgress,
+                    )
+                    listOf("node", "npm", "npx", "corepack").forEach { cmd ->
+                        removePath(File(rootfs, "usr/local/bin/$cmd"))
+                    }
+                    removePath(File(rootfs, "usr/local/lib/nodejs"))
+                }
+            }
             DevStack.PYTHON -> {
                 aptRemove(
                     runtime.proot,
@@ -873,14 +880,14 @@ class RuntimeInstaller(private val context: Context) {
             DevStack.ANDROID -> removeAndroidStack()
             DevStack.CPP -> aptRemove(
                 runtime.proot,
-                listOf("build-essential", "gcc", "g++", "make", "cmake", "gdb"),
+                listOf("build-essential", "gcc", "g++", "make", "cmake", "gdb", "pkg-config"),
                 0.45f,
                 onProgress,
             )
             DevStack.PHP -> {
                 aptRemove(
                     runtime.proot,
-                    listOf("php-cli", "php-mbstring", "php-xml", "php-curl", "php-zip"),
+                    listOf("php-cli", "php-mbstring", "php-xml", "php-curl", "php-zip", "composer"),
                     0.45f,
                     onProgress,
                 )
@@ -965,13 +972,12 @@ class RuntimeInstaller(private val context: Context) {
         var verified = true
         when (stack) {
             DevStack.WEB -> {
-                onProgress(RuntimeInstallProgress(str(R.string.rt_install_checking_node), from))
-                verifyGuest(proot, "node --version && npm --version", str(R.string.rt_install_verify_failed, "Node.js"))
+                ensureNodeAndNpmViaApt(proot, from, onProgress)
             }
             DevStack.PYTHON -> {
                 aptInstall(
                     proot,
-                    listOf("python3", "python3-pip", "python3-venv"),
+                    listOf("ca-certificates", "curl", "python3", "python3-pip", "python3-venv"),
                     str(R.string.rt_install_python),
                     from,
                     onProgress,
@@ -994,7 +1000,7 @@ class RuntimeInstaller(private val context: Context) {
             DevStack.CPP -> {
                 aptInstall(
                     proot,
-                    listOf("build-essential", "cmake", "gdb"),
+                    listOf("build-essential", "gcc", "g++", "make", "cmake", "gdb", "pkg-config"),
                     str(R.string.rt_install_cpp),
                     from,
                     onProgress,
@@ -1008,12 +1014,20 @@ class RuntimeInstaller(private val context: Context) {
             DevStack.PHP -> {
                 aptInstall(
                     proot,
-                    listOf("php-cli", "php-mbstring", "php-xml", "php-curl", "php-zip", "unzip"),
+                    listOf("ca-certificates", "curl", "unzip", "php-cli", "php-mbstring", "php-xml", "php-curl", "php-zip", "composer"),
                     str(R.string.rt_install_php),
                     from,
                     onProgress,
                 )
-                installComposer(proot, from, onProgress)
+                val aptComposer = File(rootfs, "usr/bin/composer")
+                val localComposer = File(rootfs, "usr/local/bin/composer")
+                if (aptComposer.exists()) {
+                    localComposer.parentFile?.mkdirs()
+                    if (localComposer.exists() || java.nio.file.Files.isSymbolicLink(localComposer.toPath())) {
+                        localComposer.delete()
+                    }
+                    runCatching { Os.symlink("../../bin/composer", localComposer.absolutePath) }
+                }
                 verifyGuest(proot, "php --version && composer --version", str(R.string.rt_install_verify_failed, "PHP"))
             }
             DevStack.GODOT -> installGodotToolchain(onProgress)
@@ -1064,6 +1078,13 @@ class RuntimeInstaller(private val context: Context) {
         to: Float,
         onProgress: suspend (RuntimeInstallProgress) -> Unit,
     ) {
+        aptInstall(
+            proot = proot,
+            packages = listOf("ca-certificates", "curl", "git", "unzip", "openjdk-17-jdk-headless"),
+            message = str(R.string.rt_install_android_tools),
+            fraction = from,
+            onProgress = onProgress,
+        )
         val marker = File(rootfs, "root/.pocket-android-tools-version")
         val androidHome = File(rootfs, "root/android-sdk")
         val gradleHome = File(rootfs, "opt/gradle")
@@ -1282,13 +1303,19 @@ class RuntimeInstaller(private val context: Context) {
 
     fun isStackInstalled(stack: DevStack): Boolean {
         if (readDevStackState()[stack.name] != true) return false
-        if (stack != DevStack.ANDROID) return true
-        return File(rootfs, "root/.pocket-android-tools-version").readTextOrNull() == ANDROID_TOOLS_VERSION &&
-            File(rootfs, "root/android-sdk/platforms/android-36/android.jar").isFile &&
-            File(rootfs, "root/android-sdk/build-tools/35.0.0/aapt2").isFile &&
-            File(rootfs, "opt/gradle/gradle-8.14.3/bin/gradle").isFile &&
-            File(rootfs, "root/maven/localMvnRepository").let { it.isDirectory && !it.list().isNullOrEmpty() } &&
-            File(rootfs, "root/.gradle/init.d/pocketdev-android.gradle").isFile
+        return when (stack) {
+            DevStack.WEB -> isNodeInstalledInRootfs() && isNpmInstalledInRootfs()
+            DevStack.PYTHON -> File(rootfs, "usr/bin/python3").exists()
+            DevStack.CPP -> File(rootfs, "usr/bin/gcc").exists() && File(rootfs, "usr/bin/g++").exists()
+            DevStack.PHP -> File(rootfs, "usr/bin/php").exists()
+            DevStack.GODOT -> File(rootfs, "usr/local/bin/godot").canExecute()
+            DevStack.ANDROID -> File(rootfs, "root/.pocket-android-tools-version").readTextOrNull() == ANDROID_TOOLS_VERSION &&
+                File(rootfs, "root/android-sdk/platforms/android-36/android.jar").isFile &&
+                File(rootfs, "root/android-sdk/build-tools/35.0.0/aapt2").isFile &&
+                File(rootfs, "opt/gradle/gradle-8.14.3/bin/gradle").isFile &&
+                File(rootfs, "root/maven/localMvnRepository").let { it.isDirectory && !it.list().isNullOrEmpty() } &&
+                File(rootfs, "root/.gradle/init.d/pocketdev-android.gradle").isFile
+        }
     }
 
     private fun readDevStackState(): MutableMap<String, Boolean> {
@@ -1308,52 +1335,53 @@ class RuntimeInstaller(private val context: Context) {
         devStacksFile.writeText(appJson.encodeToString(state))
     }
 
-    private suspend fun installNodeIfNeeded(
+    private fun isNodeInstalledInRootfs(): Boolean =
+        File(rootfs, "usr/bin/node").canExecute() ||
+            File(rootfs, "usr/bin/nodejs").canExecute() ||
+            File(rootfs, "usr/local/bin/node").canExecute()
+
+    private fun isNpmInstalledInRootfs(): Boolean =
+        File(rootfs, "usr/bin/npm").exists() ||
+            File(rootfs, "usr/local/bin/npm").exists()
+
+    private fun ensureNodeUsrLocalLinks() {
+        val localBin = File(rootfs, "usr/local/bin").apply { mkdirs() }
+        if (!File(rootfs, "usr/bin/node").exists() && File(rootfs, "usr/bin/nodejs").exists()) {
+            val usrBinNode = File(rootfs, "usr/bin/node")
+            if (java.nio.file.Files.isSymbolicLink(usrBinNode.toPath())) usrBinNode.delete()
+            runCatching { Os.symlink("nodejs", usrBinNode.absolutePath) }
+        }
+        listOf("node", "npm", "npx").forEach { cmd ->
+            val usrBinTarget = File(rootfs, "usr/bin/$cmd")
+            val localLink = File(localBin, cmd)
+            if (usrBinTarget.exists() || java.nio.file.Files.isSymbolicLink(usrBinTarget.toPath())) {
+                if (localLink.exists() || java.nio.file.Files.isSymbolicLink(localLink.toPath())) {
+                    localLink.delete()
+                }
+                runCatching { Os.symlink("../../bin/$cmd", localLink.absolutePath) }
+            }
+        }
+    }
+
+    private suspend fun ensureNodeAndNpmViaApt(
         proot: File,
-        from: Float,
-        to: Float,
+        fraction: Float,
         onProgress: suspend (RuntimeInstallProgress) -> Unit,
     ) {
-        if (File(rootfs, "usr/local/bin/node").exists()) return
-        val nodeDownloadLabel = str(R.string.rt_install_downloading_node, NODE_VERSION)
-        onProgress(RuntimeInstallProgress(nodeDownloadLabel, from))
-        downloads.mkdirs()
-        val nodeFileName = "node-$NODE_VERSION-linux-arm64.tar.gz"
-        val nodeBaseUrl = "https://nodejs.org/dist/$NODE_VERSION"
-        val checksum = fetchText("$nodeBaseUrl/SHASUMS256.txt")
-            .lineSequence()
-            .map(String::trim)
-            .firstOrNull { it.endsWith("  $nodeFileName") }
-            ?.substringBefore(' ')
-            ?: error("Node.js checksum was not found")
-        val nodeArchive = File(downloads, nodeFileName)
-        downloadVerified("$nodeBaseUrl/$nodeFileName", nodeArchive, checksum) { downloaded, total ->
-            val ratio = if (total > 0) downloaded.toFloat() / total else 0f
-            onProgress(
-                RuntimeInstallProgress(
-                    nodeDownloadLabel,
-                    from + ratio * (to - from),
-                    downloaded,
-                    total.takeIf { it > 0 },
-                ),
-            )
+        if (isNodeInstalledInRootfs() && isNpmInstalledInRootfs()) {
+            ensureNodeUsrLocalLinks()
+            verifyGuest(proot, "node --version && npm --version", str(R.string.rt_install_verify_failed, "Node.js"))
+            return
         }
-        onProgress(RuntimeInstallProgress(str(R.string.rt_install_node), to))
-        val nodeStaging = File(runtimeDir, "node.installing")
-        nodeStaging.deleteRecursively()
-        nodeStaging.mkdirs()
-        extractNodeArchive(nodeArchive, nodeStaging)
-        val nodeHome = File(rootfs, "usr/local/lib/nodejs")
-        nodeHome.deleteRecursively()
-        nodeHome.parentFile?.mkdirs()
-        check(nodeStaging.renameTo(nodeHome)) { "Could not activate Node.js" }
-        val localBin = File(rootfs, "usr/local/bin").apply { mkdirs() }
-        listOf("node", "npm", "npx", "corepack").forEach { command ->
-            val link = File(localBin, command)
-            if (link.exists() || java.nio.file.Files.isSymbolicLink(link.toPath())) link.delete()
-            Os.symlink("../lib/nodejs/bin/$command", link.absolutePath)
-        }
-        nodeArchive.delete()
+        aptInstall(
+            proot = proot,
+            packages = listOf("ca-certificates", "curl", "nodejs", "npm"),
+            message = str(R.string.rt_install_node),
+            fraction = fraction,
+            onProgress = onProgress,
+        )
+        ensureNodeUsrLocalLinks()
+        verifyGuest(proot, "node --version && npm --version", str(R.string.rt_install_verify_failed, "Node.js"))
     }
 
     private suspend fun aptInstall(
@@ -1625,7 +1653,7 @@ class RuntimeInstaller(private val context: Context) {
         ensureSettingsAndHooks()
         File(context.filesDir, "runtime-bridge").apply { mkdirs(); listFiles()?.forEach { it.delete() } }
         onProgress(RuntimeInstallProgress(str(R.string.rt_install_preparing_bridge), 0.42f))
-        check(File(rootfs, "usr/local/bin/node").canExecute()) { "Core runtime is missing Node.js" }
+        if (isNodeInstalledInRootfs()) ensureNodeUsrLocalLinks()
         check(File(rootfs, "usr/bin/git").canExecute()) { "Core runtime is missing Git" }
         onProgress(RuntimeInstallProgress(str(R.string.rt_install_runtime_ready), 1f))
         return installed
@@ -1795,11 +1823,26 @@ printf '%s\n' '{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decis
         put("Grep")
     }
 
+    private fun writeAptNoRecommendsConfig(targetRootfs: File = rootfs) {
+        if (!targetRootfs.isDirectory) return
+        val noRecommendsConf = File(targetRootfs, "etc/apt/apt.conf.d/99-no-recommends-suggests")
+        noRecommendsConf.parentFile?.mkdirs()
+        noRecommendsConf.writeText(
+            """
+            APT::Install-Recommends "false";
+            APT::Install-Suggests "false";
+            """.trimIndent() + "\n",
+        )
+    }
+
     private fun writeResolver() {
         val manager = context.getSystemService(ConnectivityManager::class.java)
         val dns = manager.getLinkProperties(manager.activeNetwork)?.dnsServers.orEmpty()
         val servers = dns.mapNotNull { it.hostAddress }.ifEmpty { listOf("8.8.8.8", "1.1.1.1") }
-        File(rootfs, "etc/resolv.conf").writeText(servers.joinToString("\n") { "nameserver $it" } + "\n")
+        val resolvFile = File(rootfs, "etc/resolv.conf")
+        resolvFile.parentFile?.mkdirs()
+        resolvFile.writeText(servers.joinToString("\n") { "nameserver $it" } + "\n")
+        writeAptNoRecommendsConfig(rootfs)
     }
 
     private suspend fun obtainUbuntuBaseRootfs(
@@ -1905,6 +1948,7 @@ printf '%s\n' '{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decis
             };
             """.trimIndent() + "\n",
         )
+        writeAptNoRecommendsConfig(targetRootfs)
 
         // Prevent apt-get upgrade inside PRoot --link2symlink from replacing /usr/bin/coreutils
         // with a .l2s.coreutils.dpkg-new* backing file, which triggers rust-coreutils's /proc/self/exe check.
@@ -2162,7 +2206,10 @@ printf '%s\n' '{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decis
             set -e
             export DEBIAN_FRONTEND=noninteractive
             apt-get update -y
-            apt-get install -y --no-install-recommends ca-certificates curl unzip coreutils libfontconfig1 libfreetype6 libgl1 libx11-6 libxcursor1 libxinerama1 libxi6 libxrandr2 libxrender1
+            apt-get install -y --no-install-recommends ca-certificates curl unzip coreutils nodejs npm libfontconfig1 libfreetype6 libgl1 libx11-6 libxcursor1 libxinerama1 libxi6 libxrandr2 libxrender1
+            mkdir -p /usr/local/bin
+            if [ ! -e /usr/bin/node ] && [ -x /usr/bin/nodejs ]; then ln -sf nodejs /usr/bin/node; fi
+            for cmd in node npm npx; do if [ -e /usr/bin/${'$'}cmd ]; then ln -sf ../../bin/${'$'}cmd /usr/local/bin/${'$'}cmd; fi; done
             mkdir -p /tmp/godot-install /usr/local/bin /usr/local/lib/godot-mcp/build
             curl -fL --retry 3 -o /tmp/godot-install/SHA512-SUMS.txt https://github.com/godotengine/godot/releases/download/4.7.2-stable/SHA512-SUMS.txt
             curl -fL --retry 3 -o /tmp/godot-install/Godot_v4.7.2-stable_linux.arm64.zip https://github.com/godotengine/godot/releases/download/4.7.2-stable/Godot_v4.7.2-stable_linux.arm64.zip
