@@ -455,6 +455,18 @@ data class AppUiState(
     val androidApkInfo: AndroidApkInfo? = null,
     val androidHealthChecks: List<AndroidHealthCheck> = emptyList(),
     val androidHealthRunning: Boolean = false,
+    val hostRuntimeVersion: String = "",
+    val hostRuntimePythonVersion: String = "",
+    val hostRuntimeProotDistroVersion: String = "",
+    val hostRuntimeProotVersion: String = "",
+    val hostRuntimeAvailableUpdate: String? = null,
+    val hostRuntimeChecking: Boolean = false,
+    val hostRuntimeUpdating: Boolean = false,
+    val hostRuntimeRepairing: Boolean = false,
+    val hostRuntimeMessage: String? = null,
+    val hostRuntimeProgress: Float = 0f,
+    val hostRuntimeBytes: Pair<Long, Long>? = null,
+    val hostRuntimeBytesPerSecond: Long? = null,
     val appUpdate: AppUpdateInfo? = null,
     val appUpdateStatus: AppUpdateStatus? = null,
     val appUpdateDownloadedBytes: Long = 0L,
@@ -2242,6 +2254,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 installedAgentVersions = if (installed) installer.installedAgentVersions() else emptyMap(),
             )
         }
+        if (installed) refreshHostRuntimeInfo()
         when {
             !installed && setupSnapshot.status == RuntimeSetupStatus.ERROR -> onSetupSnapshot(setupSnapshot)
             !installed -> _state.update { it.copy(startupStage = StartupStage.SETUP_REQUIRED, startupProgress = 0f) }
@@ -2318,6 +2331,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                             installedAgentVersions = installedAgents,
                         )
                     }
+                    refreshHostRuntimeInfo()
                     if (preferences.onboardingComplete) {
                         initializeRuntime()
                     } else {
@@ -2370,6 +2384,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 startupErrorIsOffline = false,
             )
         }
+        refreshHostRuntimeInfo()
         val result = runCatching {
             withContext(Dispatchers.IO) {
                 installer.initializeExisting { progress ->
@@ -2735,6 +2750,161 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
     }
+
+    fun refreshHostRuntimeInfo() {
+        val manifest = installer.installedHostRuntimeManifest()
+        val version = manifest?.version?.ifBlank { null } ?: installer.installedHostRuntimeVersion()
+        _state.update { current ->
+            current.copy(
+                hostRuntimeVersion = version,
+                hostRuntimePythonVersion = manifest?.pythonVersion.orEmpty(),
+                hostRuntimeProotDistroVersion = manifest?.prootDistroVersion.orEmpty(),
+                hostRuntimeProotVersion = manifest?.prootVersion.orEmpty(),
+            )
+        }
+    }
+
+    fun checkHostRuntimeUpdate() {
+        val current = _state.value
+        if (current.hostRuntimeChecking || current.hostRuntimeUpdating) return
+        _state.update {
+            it.copy(
+                hostRuntimeChecking = true,
+                hostRuntimeMessage = "Checking Mobile-Harness-Runtime releases…",
+            )
+        }
+        viewModelScope.launch {
+            val result = withContext(Dispatchers.IO) {
+                runCatching { installer.checkHostRuntimeUpdate() }
+            }
+            _state.update { state ->
+                result.fold(
+                    onSuccess = { info ->
+                        val latestVer = info.latestManifest.version
+                        val hasUpdate = info.installedVersion.isNotBlank() && info.installedVersion != latestVer
+                        state.copy(
+                            hostRuntimeVersion = info.installedVersion.ifBlank { state.hostRuntimeVersion },
+                            hostRuntimePythonVersion = info.latestManifest.pythonVersion.ifBlank { state.hostRuntimePythonVersion },
+                            hostRuntimeProotDistroVersion = info.latestManifest.prootDistroVersion.ifBlank { state.hostRuntimeProotDistroVersion },
+                            hostRuntimeProotVersion = info.latestManifest.prootVersion.ifBlank { state.hostRuntimeProotVersion },
+                            hostRuntimeAvailableUpdate = latestVer.takeIf { hasUpdate },
+                            hostRuntimeChecking = false,
+                            hostRuntimeMessage = if (hasUpdate) {
+                                "Update available: $latestVer"
+                            } else {
+                                "Host runtime is up to date (${info.installedVersion.ifBlank { latestVer }})"
+                            },
+                        )
+                    },
+                    onFailure = { error ->
+                        state.copy(
+                            hostRuntimeChecking = false,
+                            hostRuntimeMessage = error.message?.take(200) ?: "Could not check host runtime updates",
+                        )
+                    },
+                )
+            }
+        }
+    }
+
+    fun updateHostRuntime(force: Boolean = false) {
+        val current = _state.value
+        if (current.hostRuntimeUpdating || current.devStackInstalling != null ||
+            current.agentInstalling != null || current.agentUpdating != null
+        ) return
+        if (current.isRunning || current.projectTerminalRunning || _isTerminalRunning.value || current.androidBuildRunning) {
+            _state.update { it.copy(toastMessage = "Stop active tasks or terminals before updating the host runtime.") }
+            return
+        }
+        _state.update {
+            it.copy(
+                hostRuntimeUpdating = true,
+                hostRuntimeRepairing = force,
+                hostRuntimeMessage = if (force) "Repairing isolated host runtime…" else "Updating isolated host runtime…",
+                hostRuntimeProgress = 0.02f,
+                hostRuntimeBytes = null,
+                hostRuntimeBytesPerSecond = null,
+            )
+        }
+        viewModelScope.launch {
+            var sampleBytes = 0L
+            var sampleAt = SystemClock.elapsedRealtime()
+            var latestSpeed: Long? = null
+            val result = withContext(Dispatchers.IO) {
+                runCatching {
+                    installer.updateOrRepairHostRuntime(force = force) { progress ->
+                        val transfer = progress.totalBytes?.let { total ->
+                            (progress.downloadedBytes ?: 0L) to total
+                        }
+                        if (transfer != null) {
+                            val now = SystemClock.elapsedRealtime()
+                            val elapsed = now - sampleAt
+                            val delta = transfer.first - sampleBytes
+                            if (delta < 0L) {
+                                sampleBytes = transfer.first
+                                sampleTimeReset()
+                                latestSpeed = null
+                            } else if (elapsed >= 500L) {
+                                latestSpeed = (delta * 1_000L / elapsed).coerceAtLeast(0L)
+                                sampleBytes = transfer.first
+                                sampleAt = now
+                            }
+                        } else {
+                            sampleBytes = 0L
+                            sampleAt = SystemClock.elapsedRealtime()
+                            latestSpeed = null
+                        }
+                        _state.update { state ->
+                            state.copy(
+                                hostRuntimeMessage = progress.message,
+                                hostRuntimeProgress = progress.fraction.coerceIn(0f, 1f),
+                                hostRuntimeBytes = transfer,
+                                hostRuntimeBytesPerSecond = latestSpeed,
+                            )
+                        }
+                    }
+                }
+            }
+            result.onSuccess { manifest ->
+                _state.update { state ->
+                    val doneMsg = if (force) {
+                        "Host runtime repaired (${manifest.version})"
+                    } else {
+                        "Host runtime updated to ${manifest.version}"
+                    }
+                    state.copy(
+                        hostRuntimeVersion = manifest.version,
+                        hostRuntimePythonVersion = manifest.pythonVersion,
+                        hostRuntimeProotDistroVersion = manifest.prootDistroVersion,
+                        hostRuntimeProotVersion = manifest.prootVersion,
+                        hostRuntimeAvailableUpdate = null,
+                        hostRuntimeUpdating = false,
+                        hostRuntimeRepairing = false,
+                        hostRuntimeProgress = 0f,
+                        hostRuntimeBytes = null,
+                        hostRuntimeBytesPerSecond = null,
+                        hostRuntimeMessage = doneMsg,
+                        toastMessage = doneMsg,
+                    )
+                }
+            }.onFailure { error ->
+                val errMsg = error.message?.take(220) ?: "Host runtime update failed"
+                _state.update { state ->
+                    state.copy(
+                        hostRuntimeUpdating = false,
+                        hostRuntimeRepairing = false,
+                        hostRuntimeProgress = 0f,
+                        hostRuntimeBytes = null,
+                        hostRuntimeBytesPerSecond = null,
+                        hostRuntimeMessage = errMsg,
+                        toastMessage = errMsg,
+                    )
+                }
+            }
+        }
+    }
+
+    private fun sampleTimeReset() = Unit
 
     fun startAntigravityLogin() {
         if (_state.value.agentInstalling != null || _state.value.isRunning) return
@@ -3609,6 +3779,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                             "GH_PROMPT_DISABLED" to "1",
                             "GH_NO_UPDATE_NOTIFIER" to "1",
                         )
+                        if (!useGitHubCli) {
+                            installer.ensureGitInstalled { progress ->
+                                _state.update { it.copy(gitCloneMessage = progress.message) }
+                            }
+                        }
                         val installed = installer.installedRuntime()
                         val command = if (useGitHubCli && repositoryName != null) {
                             buildList {

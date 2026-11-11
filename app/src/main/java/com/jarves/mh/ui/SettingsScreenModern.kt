@@ -96,6 +96,9 @@ fun SettingsScreen(
     onClearTerminal: () -> Unit,
     onInstallDevStack: (DevStack) -> Unit = {},
     onRemoveDevStack: (DevStack) -> Unit = {},
+    onCheckHostRuntimeUpdate: () -> Unit = {},
+    onUpdateHostRuntime: () -> Unit = {},
+    onRepairHostRuntime: () -> Unit = {},
     initialDebugUpdateManifestUrl: String = "",
     onSetDebugUpdateManifestUrl: (String) -> Unit = {},
     onClearDebugUpdateManifestUrl: () -> Unit = {},
@@ -108,6 +111,32 @@ fun SettingsScreen(
     var terminalCleared by remember { mutableStateOf(false) }
     var showReliabilityHelp by rememberSaveable { mutableStateOf(false) }
     var stackPendingRemoval by remember { mutableStateOf<DevStack?>(null) }
+    var showRepairHostRuntimeDialog by rememberSaveable { mutableStateOf(false) }
+
+    if (showRepairHostRuntimeDialog) {
+        AlertDialog(
+            onDismissRequest = { showRepairHostRuntimeDialog = false },
+            title = { Text("Repair Host Runtime?") },
+            text = {
+                Text(
+                    "This will wipe the isolated host runtime binaries and libraries (proot, proot-distro, and Python 3.14) and re-extract the latest release from GitHub. Your installed Ubuntu container and project workspaces will be preserved.",
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showRepairHostRuntimeDialog = false
+                        onRepairHostRuntime()
+                    },
+                ) { Text("Repair", color = PocketOrange, fontWeight = FontWeight.Bold) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showRepairHostRuntimeDialog = false }) {
+                    Text(stringResource(R.string.action_cancel))
+                }
+            },
+        )
+    }
 
     stackPendingRemoval?.let { stack ->
         AlertDialog(
@@ -357,20 +386,137 @@ fun SettingsScreen(
             }
 
             item {
+                val runtimeSubtitle = if (state.hostRuntimeProotDistroVersion.isNotBlank()) {
+                    "Ubuntu LTS · proot-distro v${state.hostRuntimeProotDistroVersion} · ARM64"
+                } else {
+                    "Ubuntu LTS · proot-distro · ARM64"
+                }
                 SettingsAccordion(
                     title = stringResource(R.string.settings_runtime),
-                    subtitle = "Ubuntu 26.04.1 LTS PRoot · ARM64",
+                    subtitle = runtimeSubtitle,
                     icon = Icons.Default.Terminal,
                     expanded = expanded == SettingsSection.RUNTIME,
                     onClick = { toggle(SettingsSection.RUNTIME) },
                 ) {
                     RuntimeInfoRow(stringResource(R.string.runtime_architecture), "ARM64 (aarch64)")
-                    RuntimeInfoRow(stringResource(R.string.runtime_environment), "Ubuntu 26.04.1 LTS PRoot")
+                    RuntimeInfoRow(stringResource(R.string.runtime_environment), "Ubuntu LTS (Isolated PRoot)")
+                    RuntimeInfoRow(
+                        "Host runtime build",
+                        state.hostRuntimeVersion.ifBlank { "Installed" },
+                    )
+                    if (state.hostRuntimeProotDistroVersion.isNotBlank() || state.hostRuntimePythonVersion.isNotBlank()) {
+                        RuntimeInfoRow(
+                            "Host engine",
+                            buildList {
+                                if (state.hostRuntimeProotDistroVersion.isNotBlank()) add("proot-distro ${state.hostRuntimeProotDistroVersion}")
+                                if (state.hostRuntimePythonVersion.isNotBlank()) add("Python ${state.hostRuntimePythonVersion}")
+                            }.joinToString(" · "),
+                        )
+                    }
+                    if (state.hostRuntimeProotVersion.isNotBlank()) {
+                        RuntimeInfoRow("PRoot binary", state.hostRuntimeProotVersion)
+                    }
+
+                    if (state.hostRuntimeUpdating) {
+                        Spacer(Modifier.height(4.dp))
+                        LinearProgressIndicator(
+                            progress = { state.hostRuntimeProgress.coerceIn(0f, 1f) },
+                            modifier = Modifier.fillMaxWidth().height(7.dp),
+                            color = PocketOrange,
+                            trackColor = MaterialTheme.colorScheme.surfaceVariant,
+                        )
+                        Spacer(Modifier.height(6.dp))
+                        state.hostRuntimeBytes?.let { (downloaded, total) ->
+                            Surface(
+                                modifier = Modifier.fillMaxWidth(),
+                                shape = RoundedCornerShape(12.dp),
+                                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
+                            ) {
+                                Column(Modifier.padding(horizontal = 12.dp, vertical = 10.dp)) {
+                                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                        Text(
+                                            stringResource(R.string.st_transfer_progress, formatTransferMb(downloaded), formatTransferMb(total)),
+                                            fontSize = 12.sp,
+                                            fontWeight = FontWeight.SemiBold,
+                                            fontFamily = FontFamily.Monospace,
+                                        )
+                                        state.hostRuntimeBytesPerSecond?.takeIf { it > 0L }?.let { speed ->
+                                            Text(
+                                                stringResource(R.string.st_transfer_speed_eta, formatTransferSpeed(speed), formatTransferEta(downloaded, total, speed)),
+                                                fontSize = 11.sp,
+                                                color = PocketOrange,
+                                                fontFamily = FontFamily.Monospace,
+                                            )
+                                        }
+                                    }
+                                    Text(
+                                        state.hostRuntimeMessage ?: stringResource(R.string.st_downloading),
+                                        fontSize = 11.sp,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                }
+                            }
+                        } ?: Text(
+                            state.hostRuntimeMessage ?: stringResource(R.string.st_processing),
+                            fontSize = 11.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    } else {
+                        state.hostRuntimeMessage?.let { msg ->
+                            Text(
+                                msg,
+                                fontSize = 12.sp,
+                                color = if (state.hostRuntimeAvailableUpdate != null) PocketOrange else MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        val actionsEnabled = !state.hostRuntimeChecking && !state.hostRuntimeUpdating &&
+                            !state.isRunning && !state.projectTerminalRunning && !state.androidBuildRunning
+                        if (state.hostRuntimeAvailableUpdate != null) {
+                            Button(
+                                onClick = onUpdateHostRuntime,
+                                enabled = actionsEnabled,
+                                modifier = Modifier.fillMaxWidth(),
+                            ) {
+                                Text("Update Host Runtime (${state.hostRuntimeAvailableUpdate})")
+                            }
+                        }
+                        Row(
+                            Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            OutlinedButton(
+                                onClick = onCheckHostRuntimeUpdate,
+                                enabled = actionsEnabled,
+                                modifier = Modifier.weight(1f),
+                            ) {
+                                if (state.hostRuntimeChecking) {
+                                    CircularProgressIndicator(Modifier.size(15.dp), strokeWidth = 2.dp)
+                                    Spacer(Modifier.width(6.dp))
+                                } else {
+                                    Icon(Icons.Default.Refresh, null, Modifier.size(16.dp))
+                                    Spacer(Modifier.width(6.dp))
+                                }
+                                Text("Check Update", fontSize = 12.sp, maxLines = 1)
+                            }
+                            OutlinedButton(
+                                onClick = { showRepairHostRuntimeDialog = true },
+                                enabled = actionsEnabled,
+                                modifier = Modifier.weight(1f),
+                            ) {
+                                Text("Repair Runtime", fontSize = 12.sp, maxLines = 1)
+                            }
+                        }
+                    }
+
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
                     RuntimeInfoRow(
                         stringResource(R.string.runtime_active_agent),
                         state.agentKind.localizedTitle() + if (state.installedAgentVersions.containsKey(state.agentKind)) "" else " · " + stringResource(R.string.st_not_installed),
                     )
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
                     Text(
                         stringResource(R.string.runtime_installed_agents),
                         fontSize = 12.sp,

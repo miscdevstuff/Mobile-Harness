@@ -30,6 +30,8 @@ val runtimeReleaseBaseUrl =
     "https://github.com/techjarves/Mobile-Harness/releases/download/runtime-2026.09.4"
 val appUpdateManifestUrl =
     "https://github.com/techjarves/Mobile-Harness/releases/latest/download/mobile-harness-update.json"
+val hostRuntimeManifestUrl =
+    "https://github.com/miscdevstuff/Mobile-Harness-Runtime/releases/latest/download/mhr-manifest.json"
 val runtimeBundleDir = rootProject.layout.projectDirectory.dir("dist/runtime-bundles")
 val generatedRuntimeAssets = layout.buildDirectory.dir("generated/runtime-assets")
 
@@ -97,6 +99,7 @@ android {
 
         buildConfigField("boolean", "IS_PLAY_BUILD", playBuild.toString())
         buildConfigField("String", "PRIVACY_POLICY_URL", buildConfigString(privacyPolicyUrl))
+        buildConfigField("String", "HOST_RUNTIME_MANIFEST_URL", buildConfigString(hostRuntimeManifestUrl))
 
         buildConfigField(
             "String",
