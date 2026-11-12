@@ -246,11 +246,22 @@ internal class HostRuntimeInstaller(
             !File(rootfs, "usr/bin/curl").canExecute() ||
             coreToolsMarker.readTextOrNull() != CORE_TOOLS_VERSION
         if (coreNeeded) {
-            aptInstall(
-                packages = listOf("ca-certificates", "curl", "git", "unzip", "whiptail"),
-                message = str(R.string.rt_install_git_base_tools),
-                fraction = from + (to - from) * 0.75f,
+            val basePackages = "whiptail ca-certificates curl git unzip"
+            val setupFraction = from + (to - from) * 0.75f
+            onProgress(RuntimeInstallProgress(str(R.string.rt_install_git_base_tools), setupFraction))
+            val command = "export DEBIAN_FRONTEND=noninteractive; " +
+                "apt-get -o DPkg::Lock::Timeout=120 update; " +
+                "apt-get -o DPkg::Lock::Timeout=120 install --allow-remove-essential -y coreutils-from-gnu coreutils-from-uutils-; " +
+                "apt-get -o DPkg::Lock::Timeout=120 purge -y rust-coreutils; " +
+                "apt-get -o DPkg::Lock::Timeout=120 install -y $basePackages; " +
+                "apt-get clean; rm -rf /var/lib/apt/lists/*"
+            runGuestCommand(
+                command = command,
+                displayCommand = "Switch to GNU coreutils, purge rust-coreutils, and install $basePackages",
+                fraction = setupFraction,
+                timeoutMs = 30 * 60 * 1_000L,
                 onProgress = onProgress,
+                failureMessage = str(R.string.rt_install_could_not_install, basePackages),
             )
             verifyGuest("git --version && curl --version", str(R.string.rt_install_verify_failed, "Git"))
             coreToolsMarker.writeText(CORE_TOOLS_VERSION)
@@ -672,7 +683,7 @@ internal class HostRuntimeInstaller(
 
     companion object {
         const val UBUNTU_CONTAINER_NAME = "ubuntu"
-        const val CORE_TOOLS_VERSION = "pd-ubuntu-core-tools-v1"
+        const val CORE_TOOLS_VERSION = "pd-ubuntu-core-tools-v2"
         private const val MAX_TERMINAL_LINE = 500
         private const val MAX_COLLECTED_OUTPUT = 24_000
         private const val MAX_PROCESS_OUTPUT_BYTES = 256 * 1024
