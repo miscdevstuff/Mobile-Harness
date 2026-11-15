@@ -93,7 +93,6 @@ fun SettingsScreen(
     diagnosticsFlow: kotlinx.coroutines.flow.StateFlow<DeveloperDiagnostics>,
     onSetThemeMode: (AppThemeMode) -> Unit,
     onSetLanguage: (String) -> Unit = {},
-    onClearTerminal: () -> Unit,
     onInstallDevStack: (DevStack) -> Unit = {},
     onRemoveDevStack: (DevStack) -> Unit = {},
     onCheckHostRuntimeUpdate: () -> Unit = {},
@@ -108,7 +107,6 @@ fun SettingsScreen(
 ) {
     val context = LocalContext.current
     var expanded by rememberSaveable { mutableStateOf<SettingsSection?>(null) }
-    var terminalCleared by remember { mutableStateOf(false) }
     var showReliabilityHelp by rememberSaveable { mutableStateOf(false) }
     var stackPendingRemoval by remember { mutableStateOf<DevStack?>(null) }
     var showRepairHostRuntimeDialog by rememberSaveable { mutableStateOf(false) }
@@ -372,12 +370,13 @@ fun SettingsScreen(
                                         )
                                     }
                                 }
-                            } ?: Text(
-                                state.devStackMessage ?: stringResource(R.string.st_processing),
-                                fontSize = 11.sp,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
+                            }
+                            Spacer(Modifier.height(8.dp))
+                            ReadOnlyMiniTerminal(
+                                output = state.devStackLog.ifBlank { state.devStackMessage ?: stringResource(R.string.st_processing) },
+                                title = stringResource(R.string.ws_terminal_linux_title),
+                                isRunning = true,
+                                height = 140.dp,
                             )
                         }
                         if (index != DevStack.entries.lastIndex) HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
@@ -458,12 +457,13 @@ fun SettingsScreen(
                                     )
                                 }
                             }
-                        } ?: Text(
-                            state.hostRuntimeMessage ?: stringResource(R.string.st_processing),
-                            fontSize = 11.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
+                        }
+                        Spacer(Modifier.height(8.dp))
+                        ReadOnlyMiniTerminal(
+                            output = state.hostRuntimeLog.ifBlank { state.hostRuntimeMessage ?: stringResource(R.string.st_processing) },
+                            title = stringResource(R.string.ws_terminal_linux_title),
+                            isRunning = true,
+                            height = 140.dp,
                         )
                     } else {
                         state.hostRuntimeMessage?.let { msg ->
@@ -474,7 +474,7 @@ fun SettingsScreen(
                             )
                         }
                         val actionsEnabled = !state.hostRuntimeChecking && !state.hostRuntimeUpdating &&
-                            !state.isRunning && !state.projectTerminalRunning && !state.androidBuildRunning
+                            !state.isRunning && !state.androidBuildRunning
                         if (state.hostRuntimeAvailableUpdate != null) {
                             Button(
                                 onClick = onUpdateHostRuntime,
@@ -531,15 +531,6 @@ fun SettingsScreen(
                                 RuntimeInfoRow(agent.localizedTitle(), "v$version")
                             }
                         }
-                    }
-                    Spacer(Modifier.height(8.dp))
-                    OutlinedButton(
-                        onClick = { onClearTerminal(); terminalCleared = true },
-                        modifier = Modifier.fillMaxWidth(),
-                    ) {
-                        Icon(Icons.Default.DeleteSweep, null, Modifier.size(17.dp))
-                        Spacer(Modifier.width(7.dp))
-                        Text(if (terminalCleared) stringResource(R.string.runtime_history_cleared) else stringResource(R.string.runtime_clear_history))
                     }
                     OutlinedButton(
                         onClick = { showReliabilityHelp = !showReliabilityHelp },
@@ -640,7 +631,7 @@ private fun DeveloperDiagnosticsContent(
     onStopInactiveProcesses: () -> Unit,
     onClearRuntimeCache: () -> Unit,
 ) {
-    val busy = state.isRunning || state.projectTerminalRunning || state.androidBuildRunning
+    val busy = state.isRunning || state.androidBuildRunning
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
         TextButton(onClick = onRefresh, enabled = !diagnostics.loading) {
             if (diagnostics.loading) {

@@ -7,3 +7,6 @@ endif()
 
 add_library(pocketspawn SHARED pocket_spawn.c)
 target_link_options(pocketspawn PRIVATE "-Wl,-z,max-page-size=16384")
+
+add_library(termux SHARED termux.c)
+target_link_options(termux PRIVATE "-Wl,-z,max-page-size=16384")

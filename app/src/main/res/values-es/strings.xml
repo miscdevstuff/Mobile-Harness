@@ -68,8 +68,6 @@
     <string name="runtime_environment">Entorno</string>
     <string name="runtime_active_agent">Agente activo</string>
     <string name="runtime_installed_agents">Agentes instalados</string>
-    <string name="runtime_clear_history">Borrar historial de terminal</string>
-    <string name="runtime_history_cleared">Historial de terminal borrado</string>
     <string name="runtime_advanced_reliability">Fiabilidad avanzada del entorno</string>
 
     <!-- Provider & Connection -->

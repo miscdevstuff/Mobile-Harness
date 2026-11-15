@@ -4,6 +4,7 @@ import android.content.Context
 import android.system.Os
 import com.jarves.mh.BuildConfig
 import com.jarves.mh.R
+import com.jarves.mh.runtime.AnsiTextSanitizer
 import com.jarves.mh.runtime.NativeSpawnProcess
 import com.jarves.mh.runtime.RuntimeInstallEvent
 import com.jarves.mh.runtime.RuntimeInstallProgress
@@ -30,6 +31,13 @@ data class HostRuntimeManifest(
 data class HostRuntimeUpdateInfo(
     val installedVersion: String,
     val latestManifest: HostRuntimeManifest,
+)
+
+data class TerminalLaunchSpec(
+    val executablePath: String,
+    val cwd: String,
+    val args: Array<String>,
+    val env: Array<String>,
 )
 
 /**
@@ -269,8 +277,11 @@ internal class HostRuntimeInstaller(
         onProgress(RuntimeInstallProgress("Ubuntu LTS container ready", to))
     }
 
+    @Volatile private var containerFilesystemConfigured = false
+
     fun configureUbuntuContainerFilesystem() {
         if (!rootfs.isDirectory) return
+        if (containerFilesystemConfigured) return
         listOf(
             "root",
             "tmp",
@@ -285,41 +296,59 @@ internal class HostRuntimeInstaller(
         runCatching { Os.chmod(File(rootfs, "tmp").absolutePath, 0b111111111) }
 
         val noRecommendsConf = File(rootfs, "etc/apt/apt.conf.d/99-no-recommends-suggests")
-        noRecommendsConf.parentFile?.mkdirs()
-        noRecommendsConf.writeText(
-            """
-            APT::Install-Recommends "false";
-            APT::Install-Suggests "false";
-            """.trimIndent() + "\n",
-        )
-
-        val aptProotConf = File(rootfs, "etc/apt/apt.conf.d/99pocket-proot")
-        aptProotConf.parentFile?.mkdirs()
-        aptProotConf.writeText(
-            """
-            APT::Sandbox::User "root";
-            Acquire::Languages "none";
-            Dpkg::Use-Pty "0";
-            Dpkg::Options {
-               "--force-confdef";
-               "--force-confold";
-            };
-            """.trimIndent() + "\n",
-        )
-
-        val nvmProfile = File(rootfs, "etc/profile.d/nvm.sh")
-        if (!nvmProfile.isFile) {
-            nvmProfile.parentFile?.mkdirs()
-            nvmProfile.writeText(
+        if (!noRecommendsConf.isFile) {
+            noRecommendsConf.parentFile?.mkdirs()
+            noRecommendsConf.writeText(
                 """
-                export NVM_DIR="/root/.nvm"
-                if [ -s "${'$'}NVM_DIR/nvm.sh" ]; then
-                  \. "${'$'}NVM_DIR/nvm.sh"
-                fi
+                APT::Install-Recommends "false";
+                APT::Install-Suggests "false";
                 """.trimIndent() + "\n",
             )
+        }
+
+        val aptProotConf = File(rootfs, "etc/apt/apt.conf.d/99pocket-proot")
+        if (!aptProotConf.isFile) {
+            aptProotConf.parentFile?.mkdirs()
+            aptProotConf.writeText(
+                """
+                APT::Sandbox::User "root";
+                Acquire::Languages "none";
+                Dpkg::Use-Pty "0";
+                Dpkg::Options {
+                   "--force-confdef";
+                   "--force-confold";
+                };
+                """.trimIndent() + "\n",
+            )
+        }
+
+        val nvmProfile = File(rootfs, "etc/profile.d/nvm.sh")
+        val existingNvmProfile = nvmProfile.readTextOrNull().orEmpty()
+        if (!nvmProfile.isFile || !existingNvmProfile.contains("MH_LAZY_NVM_V1")) {
+            nvmProfile.parentFile?.mkdirs()
+            nvmProfile.writeText(LAZY_NVM_PROFILE_SH)
             runCatching { Os.chmod(nvmProfile.absolutePath, 0b110100100) }
         }
+
+        val bashrc = File(rootfs, "root/.bashrc")
+        val existingBashrc = bashrc.readTextOrNull().orEmpty()
+        if (!bashrc.isFile || existingBashrc.contains("/etc/profile.d/nvm.sh")) {
+            bashrc.parentFile?.mkdirs()
+            bashrc.writeText(
+                """
+                [ -z "${'$'}PS1" ] && return
+                HISTCONTROL=ignoreboth
+                HISTSIZE=1000
+                HISTFILESIZE=2000
+                shopt -s histappend checkwinsize
+                alias ls='ls --color=auto'
+                alias ll='ls -alF'
+                alias grep='grep --color=auto'
+                PS1='\[\033[01;32m\]\w\[\033[00m\] \$ '
+                """.trimIndent() + "\n",
+            )
+        }
+        containerFilesystemConfigured = true
     }
 
     fun ensureLegacyRootfsSymlink(): Boolean = runCatching {
@@ -355,6 +384,7 @@ internal class HostRuntimeInstaller(
         "PATH" to "${File(hostUsrDir, "bin").absolutePath}:/system/bin",
         "LANG" to "C.UTF-8",
         "TERM" to "xterm-256color",
+        "COLORTERM" to "truecolor",
     )
 
     suspend fun runHostProotDistroCommand(
@@ -421,19 +451,15 @@ internal class HostRuntimeInstaller(
         check(exit == 0) { actionableProcessError(collected.toString(), failureMessage) }
     }
 
-    fun process(
+    private fun buildGuestArgv(
         workspace: File,
         environment: Map<String, String>,
         guestCommand: List<String>,
-        guestWorkspacePath: String = "/workspace",
-        emulateHardLinks: Boolean = true,
-        outputFile: File = File(context.cacheDir, "runtime-output-${System.nanoTime()}.log"),
-        pseudoTerminal: Boolean = false,
-        ptyRows: Int = 40,
-        ptyColumns: Int = 120,
-        androidToolsReady: Boolean = false,
-        onBeforeLaunch: (() -> Unit)? = null,
-    ): Process {
+        guestWorkspacePath: String,
+        emulateHardLinks: Boolean,
+        androidToolsReady: Boolean,
+        onBeforeLaunch: (() -> Unit)?,
+    ): List<String> {
         check(isHostRuntimeReady() && isUbuntuContainerReady()) { "Linux runtime is not installed" }
         require(
             guestWorkspacePath == "/workspace" ||
@@ -455,6 +481,7 @@ internal class HostRuntimeInstaller(
         sessionEnv["HOME"] = "/root"
         sessionEnv["LANG"] = "C.UTF-8"
         sessionEnv["TERM"] = "xterm-256color"
+        sessionEnv["COLORTERM"] = "truecolor"
         if (androidToolsReady) {
             sessionEnv["ANDROID_HOME"] = "/root/android-sdk"
             sessionEnv["ANDROID_SDK_ROOT"] = "/root/android-sdk"
@@ -470,7 +497,7 @@ internal class HostRuntimeInstaller(
             }
         }
 
-        val argv = buildList {
+        return buildList {
             add(pythonBin.absolutePath)
             add("-m")
             add("proot_distro")
@@ -508,6 +535,56 @@ internal class HostRuntimeInstaller(
             sessionEnv.forEach { (k, v) -> add("$k=$v") }
             addAll(guestCommand)
         }
+
+    }
+
+    fun terminalLaunchSpec(
+        workspace: File,
+        guestWorkspacePath: String,
+        androidToolsReady: Boolean,
+        onBeforeLaunch: (() -> Unit)? = null,
+    ): TerminalLaunchSpec {
+        configureUbuntuContainerFilesystem()
+        val argv = buildGuestArgv(
+            workspace = workspace,
+            environment = emptyMap(),
+            guestCommand = listOf("/usr/bin/bash", "-l"),
+            guestWorkspacePath = guestWorkspacePath,
+            emulateHardLinks = true,
+            androidToolsReady = androidToolsReady,
+            onBeforeLaunch = onBeforeLaunch,
+        )
+        val envPairs = hostEnvironment().map { "${it.key}=${it.value}" }.toTypedArray()
+        return TerminalLaunchSpec(
+            executablePath = pythonBin.absolutePath,
+            cwd = hostRuntimeDir.absolutePath,
+            args = argv.toTypedArray(),
+            env = envPairs,
+        )
+    }
+
+    fun process(
+        workspace: File,
+        environment: Map<String, String>,
+        guestCommand: List<String>,
+        guestWorkspacePath: String = "/workspace",
+        emulateHardLinks: Boolean = true,
+        outputFile: File = File(context.cacheDir, "runtime-output-${System.nanoTime()}.log"),
+        pseudoTerminal: Boolean = false,
+        ptyRows: Int = 40,
+        ptyColumns: Int = 120,
+        androidToolsReady: Boolean = false,
+        onBeforeLaunch: (() -> Unit)? = null,
+    ): Process {
+        val argv = buildGuestArgv(
+            workspace = workspace,
+            environment = environment,
+            guestCommand = guestCommand,
+            guestWorkspacePath = guestWorkspacePath,
+            emulateHardLinks = emulateHardLinks,
+            androidToolsReady = androidToolsReady,
+            onBeforeLaunch = onBeforeLaunch,
+        )
 
         return NativeSpawnProcess.start(
             argv = argv,
@@ -668,10 +745,8 @@ internal class HostRuntimeInstaller(
         file.readTailText(MAX_PROCESS_OUTPUT_BYTES)
     }.getOrDefault("")
 
-    private fun sanitizeTerminalLine(raw: String): String = raw
-        .replace(ANSI_ESCAPE, "")
-        .filter { it == '\t' || it.code >= 32 }
-        .take(MAX_TERMINAL_LINE)
+    private fun sanitizeTerminalLine(raw: String): String =
+        AnsiTextSanitizer.strip(raw).take(MAX_TERMINAL_LINE)
 
     private fun isDpkgDatabaseProgressNoise(line: String): Boolean {
         val trimmed = line.trim()
@@ -687,6 +762,56 @@ internal class HostRuntimeInstaller(
         private const val MAX_TERMINAL_LINE = 500
         private const val MAX_COLLECTED_OUTPUT = 24_000
         private const val MAX_PROCESS_OUTPUT_BYTES = 256 * 1024
-        private val ANSI_ESCAPE = Regex("\\u001B(?:\\[[0-?]*[ -/]*[@-~]|\\][^\\u0007]*(?:\\u0007|\\u001B\\\\))")
+
+        internal val LAZY_NVM_PROFILE_SH =
+            """
+            # MH_LAZY_NVM_V1
+            export NVM_DIR="/root/.nvm"
+            for _mh_d in "${'$'}NVM_DIR"/versions/node/*/bin; do
+              if [ -d "${'$'}_mh_d" ]; then
+                _mh_node_bin="${'$'}_mh_d"
+              fi
+            done
+            if [ -n "${'$'}{_mh_node_bin:-}" ]; then
+              case ":${'$'}PATH:" in
+                *":${'$'}_mh_node_bin:"*) ;;
+                *) export PATH="${'$'}_mh_node_bin:${'$'}PATH" ;;
+              esac
+            fi
+            unset _mh_d _mh_node_bin
+            nvm() {
+              unset -f nvm
+              if [ -s "${'$'}NVM_DIR/nvm.sh" ]; then
+                \. "${'$'}NVM_DIR/nvm.sh"
+              fi
+              if [ "${'$'}(type -t nvm 2>/dev/null)" = "function" ] && [ "${'$'}(type -t __real_nvm 2>/dev/null)" != "function" ]; then
+                eval "__real_${'$'}(declare -f nvm)"
+                nvm() {
+                  __real_nvm "${'$'}@"
+                  local rc=${'$'}?
+                  if [ ${'$'}rc -eq 0 ]; then
+                    case "${'$'}{1:-}" in
+                      use|install|alias)
+                        local cur
+                        cur="${'$'}(__real_nvm current 2>/dev/null || true)"
+                        if [ -n "${'$'}cur" ] && [ "${'$'}cur" != "none" ] && [ "${'$'}cur" != "system" ]; then
+                          if [ "${'$'}{1:-}" = "use" ]; then
+                            __real_nvm alias default "${'$'}cur" >/dev/null 2>&1 || true
+                          fi
+                          for cmd in node npm npx corepack; do
+                            if [ -e "${'$'}NVM_DIR/versions/node/${'$'}cur/bin/${'$'}cmd" ]; then
+                              ln -sf "../../../root/.nvm/versions/node/${'$'}cur/bin/${'$'}cmd" "/usr/local/bin/${'$'}cmd"
+                            fi
+                          done
+                        fi
+                        ;;
+                    esac
+                  fi
+                  return ${'$'}rc
+                }
+              fi
+              nvm "${'$'}@"
+            }
+            """.trimIndent() + "\n"
     }
 }

@@ -26,13 +26,6 @@
     <string name="ws_terminal_linux_title">Linux 终端</string>
     <string name="ws_terminal_linux_subtitle">Ubuntu 20.04 · PRoot 沙盒</string>
     <string name="ws_terminal_clear_output">清除输出</string>
-    <string name="ws_terminal_previous_command">上一条命令</string>
-    <string name="ws_terminal_next_command">下一条命令</string>
-    <string name="ws_terminal_cursor_left">光标左移</string>
-    <string name="ws_terminal_cursor_right">光标右移</string>
-    <string name="ws_terminal_alt_modifier">Alt 修饰键</string>
-    <string name="ws_terminal_escape">Esc 退出键</string>
-    <string name="ws_terminal_ctrl_modifier">Control 修饰键；按 C 中断</string>
     <string name="ws_md_code_label">代码</string>
     <string name="ws_md_run_in_terminal">在项目终端中运行</string>
     <string name="ws_md_copy_code">复制代码</string>
@@ -91,7 +84,6 @@
     <string name="ws_later">稍后</string>
     <string name="ws_ping_api">Ping API</string>
     <string name="ws_task_running">任务运行中</string>
-    <string name="ws_terminal_running">终端运行中</string>
     <string name="ws_project_options">项目选项</string>
     <string name="ws_rename_project">重命名项目</string>
     <string name="ws_delete_project">删除项目</string>
@@ -100,9 +92,6 @@
     <string name="ws_history">历史记录</string>
     <string name="ws_project_chats">项目聊天</string>
     <string name="ws_allow_app_installs">请允许安装应用以运行 Android 项目</string>
-    <string name="ws_destructive_title">要运行可能具有破坏性的命令吗？</string>
-    <string name="ws_destructive_desc">此命令可能会删除文件、重写 Git 历史记录或大幅更改项目。</string>
-    <string name="ws_run_anyway">仍然运行</string>
     <string name="ws_build_run_android">构建并运行 Android 应用</string>
     <string name="ws_new_chat">新建聊天</string>
     <string name="ws_finish_task_before_switch">请先完成正在运行的任务，再切换聊天。</string>
@@ -158,4 +147,5 @@
     <string name="ws_preview_external_blocked">项目预览中已阻止外部导航</string>
     <string name="ws_open_url">打开网址</string>
     <string name="ws_refresh_preview">刷新预览</string>
+    <string name="ws_terminal_new_session">New session</string>
 </resources>

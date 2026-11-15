@@ -68,8 +68,6 @@
     <string name="runtime_environment">वातावरण</string>
     <string name="runtime_active_agent">सक्रिय एजेंट</string>
     <string name="runtime_installed_agents">इंस्टॉल किए गए एजेंट</string>
-    <string name="runtime_clear_history">टर्मिनल हिस्ट्री साफ़ करें</string>
-    <string name="runtime_history_cleared">टर्मिनल हिस्ट्री साफ़ हो गई</string>
     <string name="runtime_advanced_reliability">उन्नत रनटाइम विश्वसनीयता</string>
 
     <!-- Provider & Connection -->

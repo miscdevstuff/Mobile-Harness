@@ -68,8 +68,6 @@
     <string name="runtime_environment">环境</string>
     <string name="runtime_active_agent">当前智能助手</string>
     <string name="runtime_installed_agents">已安装智能助手</string>
-    <string name="runtime_clear_history">清除终端历史记录</string>
-    <string name="runtime_history_cleared">已清除终端历史记录</string>
     <string name="runtime_advanced_reliability">高级运行时稳定性</string>
 
     <!-- Provider & Connection -->

@@ -68,8 +68,6 @@
     <string name="runtime_environment">Окружение</string>
     <string name="runtime_active_agent">Активный агент</string>
     <string name="runtime_installed_agents">Установленные агенты</string>
-    <string name="runtime_clear_history">Очистить историю терминала</string>
-    <string name="runtime_history_cleared">История терминала очищена</string>
     <string name="runtime_advanced_reliability">Расширенная надежность среды</string>
 
     <!-- Provider & Connection -->

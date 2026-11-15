@@ -69,7 +69,9 @@ import com.jarves.mh.runtime.AntigravityAuthController
 import com.jarves.mh.runtime.AntigravityAuthState
 import com.jarves.mh.runtime.AntigravityAuthStatus
 import com.jarves.mh.runtime.AntigravityRuntimeBridge
+import com.jarves.mh.runtime.AnsiTextSanitizer
 import com.jarves.mh.runtime.NativeSpawnProcess
+import com.jarves.mh.runtime.terminal.ManagedTerminalSession
 import com.jarves.mh.runtime.RuntimeInstallProgress
 import com.jarves.mh.runtime.RuntimeInstaller
 import com.jarves.mh.runtime.RuntimeSetupController
@@ -228,15 +230,16 @@ data class OpenedFileState(
     val targetColumn: Int? = null,
 )
 
-@Serializable
-data class TerminalOutputLine(
-    val id: String = java.util.UUID.randomUUID().toString(),
-    val command: String,
-    val output: String,
-    val exitCode: Int = 0,
-)
+private fun appendMiniTerminalLog(existing: String, message: String, maxChars: Int = 12_000): String {
+    val clean = message.trim()
+    if (clean.isEmpty()) return existing
+    val lastLine = existing.substringAfterLast('\n')
+    if (lastLine == clean) return existing
+    val combined = if (existing.isEmpty()) clean else "$existing\n$clean"
+    return if (combined.length > maxChars) combined.takeLast(maxChars) else combined
+}
 
-private fun StringBuilder.appendBoundedTerminal(chunk: String, maxChars: Int) {
+private fun StringBuilder.appendBoundedLog(chunk: String, maxChars: Int) {
     if (chunk.isEmpty()) return
     if (chunk.length >= maxChars) {
         clear()
@@ -248,49 +251,6 @@ private fun StringBuilder.appendBoundedTerminal(chunk: String, maxChars: Int) {
     append(chunk)
 }
 
-/**
- * Holds back any incomplete trailing ANSI escape sequence (up to 64 chars) so chunk-by-chunk
- * sanitization never splits an escape sequence like `\u001B[31m` across two reads.
- */
-private fun consumeCompleteAnsiChunk(carry: StringBuilder, incoming: String): String {
-    carry.append(incoming)
-    val len = carry.length
-    val searchLimit = maxOf(0, len - 64)
-    var escIndex = -1
-    for (i in len - 1 downTo searchLimit) {
-        if (carry[i] == '\u001B') {
-            escIndex = i
-            break
-        }
-    }
-    if (escIndex >= 0) {
-        val tail = carry.subSequence(escIndex, len)
-        val isComplete = ANSI_TERMINAL_SEQUENCE.matchesAt(tail, 0)
-        if (!isComplete && escIndex + 1 < len) {
-            val next = tail[1]
-            val couldStillComplete = next == '[' || next == ']' || next == '(' || next == ')'
-            if (couldStillComplete) {
-                val completePrefix = carry.substring(0, escIndex)
-                carry.delete(0, escIndex)
-                return sanitizeTerminalOutput(completePrefix)
-            }
-        } else if (!isComplete && escIndex == len - 1) {
-            val completePrefix = carry.substring(0, escIndex)
-            carry.delete(0, escIndex)
-            return sanitizeTerminalOutput(completePrefix)
-        }
-    }
-    val all = carry.toString()
-    carry.clear()
-    return sanitizeTerminalOutput(all)
-}
-
-private val ANSI_TERMINAL_SEQUENCE = Regex("\\u001B(?:\\][^\\u0007]*(?:\\u0007|\\u001B\\\\)|\\[[0-?]*[ -/]*[@-~]|[()][A-Z0-9])")
-
-internal fun sanitizeTerminalOutput(text: String): String = text
-    .replace(ANSI_TERMINAL_SEQUENCE, "")
-    .filter { it == '\n' || it == '\r' || it == '\t' || it.code >= 0x20 }
-
 private val ANTIGRAVITY_MODEL_EFFORT = Regex("^(.*)-(low|medium|high)$")
 
 private fun antigravityEffortFromModel(model: String): String? =
@@ -301,17 +261,6 @@ private fun antigravityModelWithEffort(model: String, effort: String): String? {
     return "${match.groupValues[1]}-$effort"
 }
 
-@Serializable
-private data class ProjectTerminalSnapshot(
-    val lines: List<TerminalOutputLine> = emptyList(),
-    val cwd: String = "/workspace",
-)
-
-private data class ProjectTerminalResult(
-    val output: String,
-    val exitCode: Int,
-    val cwd: String,
-)
 
 private data class RuntimeRetryRequest(
     val runtime: com.jarves.mh.runtime.RuntimeBridge,
@@ -403,18 +352,13 @@ data class AppUiState(
     val queuedFollowUps: List<QueuedFollowUp> = emptyList(),
     val activeSessionId: String? = null,
     val toastMessage: String? = null,
-    val projectTerminalLines: List<TerminalOutputLine> = emptyList(),
-    val projectTerminalRunning: Boolean = false,
-    val projectTerminalCwd: String = "/workspace",
-    val projectTerminalCommand: String? = null,
-    val projectTerminalDraft: String? = null,
-    val pendingTerminalCommand: String? = null,
     val suggestedProjectRoot: String? = null,
     val selectedDevStacks: Set<DevStack> = emptySet(),
     val installedDevStacks: Set<DevStack> = emptySet(),
     val devStackInstalling: DevStack? = null,
     val devStackRemoving: Boolean = false,
     val devStackMessage: String? = null,
+    val devStackLog: String = "",
     val devStackProgress: Float = 0f,
     val devStackBytes: Pair<Long, Long>? = null,
     val devStackBytesPerSecond: Long? = null,
@@ -431,6 +375,7 @@ data class AppUiState(
     val agentUpdatesChecking: Boolean = false,
     val agentUpdating: AgentKind? = null,
     val agentUpdateMessage: String? = null,
+    val agentUpdateLog: String = "",
     val agentUpdateProgress: Float = 0f,
     val agentUpdateIndeterminate: Boolean = false,
     val agentUpdateDownloadedBytes: Long? = null,
@@ -464,6 +409,7 @@ data class AppUiState(
     val hostRuntimeUpdating: Boolean = false,
     val hostRuntimeRepairing: Boolean = false,
     val hostRuntimeMessage: String? = null,
+    val hostRuntimeLog: String = "",
     val hostRuntimeProgress: Float = 0f,
     val hostRuntimeBytes: Pair<Long, Long>? = null,
     val hostRuntimeBytesPerSecond: Long? = null,
@@ -515,10 +461,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         getApplication(),
         if (BuildConfig.DEBUG) preferences.debugUpdateManifestUrl else "",
     )
-    @Volatile private var projectTerminalProcess: Process? = null
-    @Volatile private var terminalProcess: Process? = null
-    @Volatile private var projectTerminalProjectId: String? = null
-    @Volatile private var projectTerminalStopRequested: Boolean = false
     @Volatile private var androidBuildProcess: Process? = null
     @Volatile private var androidBuildStopRequested: Boolean = false
     @Volatile private var androidLogcatProcess: Process? = null
@@ -716,7 +658,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 val keep = userMessages > 0 || userFiles > 0
                 if (!keep) {
                     workspaceDir.deleteRecursively()
-                    terminalHistoryFile(project.id).delete()
                     preferences.deleteProjectChats(project.id)
                 }
                 keep
@@ -730,20 +671,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     val state: StateFlow<AppUiState> = _state.asStateFlow()
 
-    private val _terminalLines = MutableStateFlow<List<TerminalOutputLine>>(emptyList())
-    val terminalLines: StateFlow<List<TerminalOutputLine>> = _terminalLines.asStateFlow()
-
-    private val _isTerminalRunning = MutableStateFlow(false)
-    val isTerminalRunning: StateFlow<Boolean> = _isTerminalRunning.asStateFlow()
-
-    private val _terminalLiveOutput = MutableStateFlow("")
-    val terminalLiveOutput: StateFlow<String> = _terminalLiveOutput.asStateFlow()
-
-    private val _terminalCurrentCommand = MutableStateFlow<String?>(null)
-    val terminalCurrentCommand: StateFlow<String?> = _terminalCurrentCommand.asStateFlow()
-
-    private val _projectTerminalLiveOutput = MutableStateFlow("")
-    val projectTerminalLiveOutput: StateFlow<String> = _projectTerminalLiveOutput.asStateFlow()
 
     private val _androidBuildLog = MutableStateFlow("")
     val androidBuildLog: StateFlow<String> = _androidBuildLog.asStateFlow()
@@ -772,228 +699,35 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _mcpTestStatuses = MutableStateFlow<Map<String, String>>(emptyMap())
     val mcpTestStatuses: StateFlow<Map<String, String>> = _mcpTestStatuses.asStateFlow()
 
-    fun runTerminalCommand(cmd: String) {
-        val command = cmd.trim()
-        if (command.isBlank() || _isTerminalRunning.value) return
-        if (command == "clear") {
-            _terminalLines.value = emptyList()
-            return
-        }
-        _isTerminalRunning.value = true
-        _terminalCurrentCommand.value = command
-        _terminalLiveOutput.value = ""
-        viewModelScope.launch {
-            val (output, exitCode) = withContext(Dispatchers.IO) {
-                runCatching {
-                    if (!installer.isInstalled()) {
-                        return@runCatching str(R.string.vm_linux_not_ready) to 1
-                    }
-                    val runtime = installer.installedRuntime()
-                    val workspace = File(getApplication<Application>().filesDir, "workspaces/terminal").apply { mkdirs() }
-                    val preparedCommand = prepareInteractiveShellCommand(command)
-                    val proc = installer.process(
-                        proot = runtime.proot,
-                        rootfs = runtime.rootfs,
-                        workspace = workspace,
-                        environment = emptyMap(),
-                        guestCommand = listOf("/usr/bin/bash", "-c", preparedCommand),
-                    )
-                    terminalProcess = proc
-                    val native = proc as? NativeSpawnProcess
-                    var offset = 0L
-                    val streamed = StringBuilder()
-                    val ansiCarry = StringBuilder()
-                    val readBuffer = ByteArray(16 * 1024)
-                    var autoConfirmed = false
-                    var lastUiFlushAt = 0L
-                    while (proc.isAlive || (native?.outputFile?.length() ?: 0L) > offset) {
-                        val file = native?.outputFile
-                        val available = (file?.length() ?: 0L) - offset
-                        if (file == null || available <= 0L) {
-                            delay(40)
-                            continue
-                        }
-                        val toRead = minOf(available, readBuffer.size.toLong()).toInt()
-                        val count = RandomAccessFile(file, "r").use { input ->
-                            input.seek(offset)
-                            input.read(readBuffer, 0, toRead)
-                        }
-                        if (count > 0) {
-                            offset += count
-                            val cleanChunk = consumeCompleteAnsiChunk(ansiCarry, readBuffer.decodeToString(0, count))
-                            streamed.appendBoundedTerminal(cleanChunk, MAX_PROJECT_TERMINAL_OUTPUT)
-                            val now = SystemClock.elapsedRealtime()
-                            if (now - lastUiFlushAt >= LIVE_STREAM_FLUSH_INTERVAL_MS) {
-                                lastUiFlushAt = now
-                                _terminalLiveOutput.value = streamed.toString().trimEnd()
-                            }
-                            if (!autoConfirmed) {
-                                val tailStart = (streamed.length - 512).coerceAtLeast(0)
-                                if (shouldAutoConfirmPackageCommand(command, streamed.substring(tailStart))) {
-                                    proc.outputStream.write("y\n".toByteArray())
-                                    proc.outputStream.flush()
-                                    autoConfirmed = true
-                                }
-                            }
-                        }
-                    }
-                    if (ansiCarry.isNotEmpty()) {
-                        streamed.appendBoundedTerminal(sanitizeTerminalOutput(ansiCarry.toString()), MAX_PROJECT_TERMINAL_OUTPUT)
-                        ansiCarry.clear()
-                    }
-                    val exit = proc.waitFor()
-                    runCatching { proc.outputStream.close() }
-                    val out = streamed.toString().trim()
-                    val finalOut = if (out.isNotEmpty() || exit == 0) out else str(R.string.vm_process_exited_code, exit)
-                    finalOut to exit
-                }.getOrElse { str(R.string.vm_error_with_message, it.message.orEmpty()) to 1 }
-            }
-            _terminalLines.update { it + TerminalOutputLine(command = command, output = output, exitCode = exitCode) }
-            _terminalLiveOutput.value = ""
-            _terminalCurrentCommand.value = null
-            _isTerminalRunning.value = false
-            terminalProcess = null
+    val quickTerminalSession = ManagedTerminalSession(application, preferences) {
+        runCatching {
+            check(installer.isInstalled()) { str(R.string.vm_linux_not_ready) }
+            val workspace = File(getApplication<Application>().filesDir, "workspaces").apply { mkdirs() }
+            installer.terminalLaunchSpec(workspace, "/workspace")
         }
     }
 
-    fun sendTerminalInput(text: String) {
-        sendProcessInput(terminalProcess, text)
-    }
-
-    fun interruptTerminalCommand() {
-        interruptProcess(terminalProcess)
-    }
-
-    fun clearTerminal() {
-        _terminalLines.value = emptyList()
-    }
-
-    fun requestProjectTerminalCommand(command: String) {
-        val normalized = command.trim()
-        if (normalized.isBlank() || _state.value.projectTerminalRunning || _state.value.androidBuildRunning || projectTerminalProcess?.isAlive == true) return
-        if (requiresAndroidToolchain(normalized) && !installer.isStackInstalled(DevStack.ANDROID)) {
-            _state.update {
-                it.copy(toastMessage = str(R.string.vm_android_tools_missing))
-            }
-            return
-        }
-        if (isDestructiveTerminalCommand(normalized)) {
-            _state.update { it.copy(pendingTerminalCommand = normalized) }
-        } else {
-            runProjectTerminalCommand(normalized)
+    val projectTerminalSession = ManagedTerminalSession(application, preferences) {
+        runCatching {
+            check(installer.isInstalled()) { str(R.string.vm_linux_not_ready) }
+            val project = _state.value.activeProject ?: error(str(R.string.vm_project_unavailable))
+            installer.terminalLaunchSpec(projectWorkspaceRoot(project), projectGuestRoot(project))
         }
     }
 
-    fun prepareProjectTerminalCommand(command: String) {
-        val project = _state.value.activeProject ?: return
-        if (command.isBlank() || _state.value.projectTerminalRunning || _state.value.androidBuildRunning) return
-        _state.update {
-            it.copy(
-                projectTerminalCwd = projectGuestRoot(project),
-                projectTerminalDraft = command.trim(),
-            )
-        }
-    }
-
-    fun consumeProjectTerminalDraft() {
-        _state.update { it.copy(projectTerminalDraft = null) }
+    fun openQuickTerminal() {
+        quickTerminalSession.ensureStarted("quick")
     }
 
     fun openProjectTerminal() {
         val project = _state.value.activeProject ?: return
-        if (_state.value.projectTerminalRunning || _state.value.androidBuildRunning) return
-        _state.update { it.copy(projectTerminalCwd = projectGuestRoot(project)) }
+        projectTerminalSession.ensureStarted(project.id)
     }
 
-    fun confirmProjectTerminalCommand() {
-        val command = _state.value.pendingTerminalCommand ?: return
-        _state.update { it.copy(pendingTerminalCommand = null) }
-        runProjectTerminalCommand(command)
-    }
-
-    fun cancelProjectTerminalCommand() {
-        _state.update { it.copy(pendingTerminalCommand = null) }
-    }
-
-    private fun runProjectTerminalCommand(command: String) {
+    fun pasteCommandInProjectTerminal(command: String) {
         val project = _state.value.activeProject ?: return
-        if (_state.value.projectTerminalRunning || _state.value.androidBuildRunning) return
-        val startingCwd = _state.value.projectTerminalCwd
-        val existingLines = _state.value.projectTerminalLines
-        projectTerminalStopRequested = false
-        val requestedPreviewUrl = detectServerUrl(command)
-        _projectTerminalLiveOutput.value = ""
-        _state.update {
-            it.copy(
-                projectTerminalRunning = true,
-                projectTerminalCommand = command,
-                pendingTerminalCommand = null,
-                previewReady = it.previewReady || requestedPreviewUrl != null,
-                previewUrl = requestedPreviewUrl ?: it.previewUrl,
-            )
-        }
-        viewModelScope.launch {
-            val result = withContext(Dispatchers.IO) {
-                runCatching { runProjectTerminalProcess(project.id, command, startingCwd) }
-                    .getOrElse { error ->
-                        ProjectTerminalResult(
-                            output = str(R.string.vm_terminal_error, error.message ?: error::class.java.simpleName),
-                            exitCode = 1,
-                            cwd = startingCwd,
-                        )
-                    }
-            }
-            val completedLine = TerminalOutputLine(
-                command = command,
-                output = result.output.ifBlank {
-                    if (result.exitCode == 0) "" else str(R.string.vm_process_exited_code, result.exitCode)
-                },
-                exitCode = result.exitCode,
-            )
-            val updatedLines = (existingLines + completedLine).takeLast(MAX_PROJECT_TERMINAL_HISTORY)
-            saveProjectTerminal(project.id, result.cwd, updatedLines)
-            if (_state.value.activeProject?.id == project.id) {
-                _projectTerminalLiveOutput.value = ""
-                _state.update {
-                    it.copy(
-                        projectTerminalLines = updatedLines,
-                        projectTerminalRunning = false,
-                        projectTerminalCwd = result.cwd,
-                        projectTerminalCommand = null,
-                    )
-                }
-                refreshProjectFiles()
-            }
-            projectTerminalProcess = null
-            projectTerminalProjectId = null
-            projectTerminalStopRequested = false
-        }
-    }
-
-    fun stopProjectTerminalCommand() {
-        if (!_state.value.projectTerminalRunning) return
-        projectTerminalStopRequested = true
-        viewModelScope.launch(Dispatchers.IO) {
-            projectTerminalProcess?.destroy()
-            delay(400)
-            if (projectTerminalProcess?.isAlive == true) projectTerminalProcess?.destroyForcibly()
-        }
-    }
-
-    fun sendProjectTerminalInput(text: String) {
-        sendProcessInput(projectTerminalProcess, text)
-    }
-
-    fun interruptProjectTerminalCommand() {
-        interruptProcess(projectTerminalProcess)
-    }
-
-    fun clearProjectTerminal() {
-        val project = _state.value.activeProject ?: return
-        if (_state.value.projectTerminalRunning) return
-        _projectTerminalLiveOutput.value = ""
-        _state.update { it.copy(projectTerminalLines = emptyList()) }
-        saveProjectTerminal(project.id, _state.value.projectTerminalCwd, emptyList())
+        projectTerminalSession.ensureStarted(project.id)
+        projectTerminalSession.pasteTextWithoutNewline(command)
     }
 
     fun refreshDeveloperDiagnostics() {
@@ -1021,10 +755,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 runCatching { antigravityRuntime.stopActiveSession() }
                 runCatching { opencodeRuntime.stopActiveSession() }
             }
-            if (!current.projectTerminalRunning) {
-                projectTerminalProcess?.takeIf(Process::isAlive)?.destroyForcibly()
-                projectTerminalProcess = null
-            }
             if (!current.androidBuildRunning) {
                 androidBuildProcess?.takeIf(Process::isAlive)?.destroyForcibly()
                 androidBuildProcess = null
@@ -1039,7 +769,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun clearDeveloperRuntimeCache() {
         val current = _state.value
-        if (current.isRunning || current.projectTerminalRunning || current.androidBuildRunning) {
+        if (current.isRunning || current.androidBuildRunning) {
             _state.update { it.copy(toastMessage = str(R.string.diagnostics_cache_busy)) }
             return
         }
@@ -1059,14 +789,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun releaseMemoryCaches() {
         folderMetadataCache.clear()
         cachedRecentExitSummary = null
-        _projectTerminalLiveOutput.update { it.takeLast(MEMORY_PRESSURE_TEXT_CHARS) }
         _androidBuildLog.update { it.takeLast(MEMORY_PRESSURE_TEXT_CHARS) }
         _androidLogcat.update { it.copy(lines = it.lines.takeLast(MEMORY_PRESSURE_LOGCAT_LINES)) }
-        _state.update { current ->
-            current.copy(
-                projectTerminalLines = current.projectTerminalLines.takeLast(MEMORY_PRESSURE_TERMINAL_LINES),
-            )
-        }
     }
 
     private fun collectDeveloperDiagnostics(): DeveloperDiagnostics {
@@ -1075,8 +799,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val runtime = Runtime.getRuntime()
         val active = buildList {
             if (current.isRunning) add(current.agentKind.title)
-            if (current.projectTerminalRunning || projectTerminalProcess?.isAlive == true) add(str(R.string.an_process_project_terminal))
-            if (terminalProcess?.isAlive == true) add(str(R.string.an_process_quick_terminal))
+            if (projectTerminalSession.isRunning) add(str(R.string.an_process_project_terminal))
+            if (quickTerminalSession.isRunning) add(str(R.string.an_process_quick_terminal))
             if (current.androidBuildRunning || androidBuildProcess?.isAlive == true) add(str(R.string.an_android_build))
             if (_androidLogcat.value.running || androidLogcatProcess?.isAlive == true) add(str(R.string.android_logcat_tab))
         }
@@ -1091,8 +815,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             activeProcesses = active,
             messageCount = current.messages.size,
             liveActivityCount = current.liveProcess.size,
-            terminalBufferBytes = utf8SizeInBytes(_projectTerminalLiveOutput.value) +
-                current.projectTerminalLines.sumOf { utf8SizeInBytes(it.output) },
+            terminalBufferBytes = 0L,
             buildLogBytes = utf8SizeInBytes(_androidBuildLog.value),
             logcatLines = _androidLogcat.value.lines.size,
             fileEntries = current.workspaceFiles.size,
@@ -1131,206 +854,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             .also { cachedRecentExitSummary = it }
     }
 
-    private suspend fun runProjectTerminalProcess(projectId: String, command: String, cwd: String): ProjectTerminalResult {
-        if (!installer.isInstalled()) return ProjectTerminalResult(str(R.string.vm_linux_not_ready), 1, cwd)
-        val installed = installer.installedRuntime()
-        val project = _state.value.projects.firstOrNull { it.id == projectId }
-            ?: _state.value.activeProject?.takeIf { it.id == projectId }
-            ?: return ProjectTerminalResult(str(R.string.vm_project_unavailable), 1, cwd)
-        val workspace = projectWorkspaceRoot(project)
-        val guestWorkspacePath = projectGuestRoot(project)
-        val marker = "__POCKETDEV_CWD_${UUID.randomUUID()}__"
-        val preparedCommand = prepareInteractiveShellCommand(command)
-        val script = """
-            cd -- ${shellQuote(cwd)} || exit 1
-            $preparedCommand
-            pocket_status=${'$'}?
-            printf '\n$marker%s\n' "${'$'}PWD"
-            exit ${'$'}pocket_status
-        """.trimIndent()
-        val process = installer.process(
-            proot = installed.proot,
-            rootfs = installed.rootfs,
-            workspace = workspace,
-            environment = emptyMap(),
-            guestCommand = listOf("/usr/bin/bash", "-lc", script),
-            guestWorkspacePath = guestWorkspacePath,
-        )
-        projectTerminalProcess = process
-        projectTerminalProjectId = projectId
-        if (projectTerminalStopRequested) process.destroy()
-        val native = process as? NativeSpawnProcess
-            ?: return ProjectTerminalResult(str(R.string.vm_unsupported_terminal_process), 1, cwd)
-        var offset = 0L
-        val output = StringBuilder()
-        val ansiCarry = StringBuilder()
-        val readBuffer = ByteArray(16 * 1024)
-        var autoConfirmed = false
-        var lastUiFlushAt = 0L
-        while (process.isAlive || native.outputFile.length() > offset) {
-            val available = native.outputFile.length() - offset
-            if (available <= 0L) {
-                delay(40)
-                continue
-            }
-            val toRead = minOf(available, readBuffer.size.toLong()).toInt()
-            val count = RandomAccessFile(native.outputFile, "r").use { file ->
-                file.seek(offset)
-                file.read(readBuffer, 0, toRead)
-            }
-            if (count > 0) {
-                offset += count
-                val cleanChunk = consumeCompleteAnsiChunk(ansiCarry, readBuffer.decodeToString(0, count))
-                output.appendBoundedTerminal(cleanChunk, MAX_PROJECT_TERMINAL_OUTPUT + 512)
-                val tailStart = (output.length - 1024).coerceAtLeast(0)
-                val recentTail = output.substring(tailStart).substringBefore(marker)
-                if (!autoConfirmed && shouldAutoConfirmPackageCommand(command, recentTail)) {
-                    process.outputStream.write("y\n".toByteArray())
-                    process.outputStream.flush()
-                    autoConfirmed = true
-                }
-                val detectedPreviewUrl = detectPreviewUrl(recentTail)
-                val now = SystemClock.elapsedRealtime()
-                if (detectedPreviewUrl != null || now - lastUiFlushAt >= LIVE_STREAM_FLUSH_INTERVAL_MS) {
-                    lastUiFlushAt = now
-                    val markerIdx = output.lastIndexOf(marker)
-                    val visible = (if (markerIdx >= 0) output.substring(0, markerIdx) else output.toString())
-                        .takeLast(MAX_PROJECT_TERMINAL_OUTPUT)
-                    if (_state.value.activeProject?.id == projectId) {
-                        _projectTerminalLiveOutput.value = visible
-                        if (detectedPreviewUrl != null) {
-                            _state.update { current ->
-                                if (current.activeProject?.id == projectId) {
-                                    current.copy(
-                                        previewReady = true,
-                                        previewUrl = detectedPreviewUrl,
-                                    )
-                                } else current
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        if (ansiCarry.isNotEmpty()) {
-            output.appendBoundedTerminal(sanitizeTerminalOutput(ansiCarry.toString()), MAX_PROJECT_TERMINAL_OUTPUT + 512)
-            ansiCarry.clear()
-        }
-        val exitCode = process.waitFor()
-        runCatching { process.outputStream.close() }
-        val raw = output.toString()
-        val cwdAfter = raw.substringAfter(marker, "")
-            .lineSequence()
-            .firstOrNull()
-            ?.trim()
-            ?.takeIf { it == guestWorkspacePath || it.startsWith("$guestWorkspacePath/") }
-            ?: cwd
-        val cleanOutput = raw.substringBefore(marker)
-            .trim()
-            .takeLast(MAX_PROJECT_TERMINAL_OUTPUT)
-        return ProjectTerminalResult(cleanOutput, exitCode, cwdAfter)
-    }
-
-    private fun sendProcessInput(process: Process?, text: String) {
-        if (process?.isAlive != true || text.isBlank()) return
-        viewModelScope.launch(Dispatchers.IO) {
-            runCatching {
-                process.outputStream.write((text + "\n").toByteArray())
-                process.outputStream.flush()
-            }.onFailure {
-                _state.update { current -> current.copy(toastMessage = str(R.string.vm_process_not_accepting_input)) }
-            }
-        }
-    }
-
-    private fun interruptProcess(process: Process?) {
-        if (process?.isAlive != true) return
-        viewModelScope.launch(Dispatchers.IO) {
-            (process as? NativeSpawnProcess)?.interrupt() ?: process.destroy()
-        }
-    }
-
-    /**
-     * Package management must never block on Y/N, locale, timezone, service-restart,
-     * or config-file dialogs in the phone UI. Other commands remain interactive and
-     * can receive input through [sendProcessInput].
-     */
-    private fun prepareInteractiveShellCommand(command: String): String {
-        val normalizedApt = command
-            .replace(Regex("(?<![\\w-])sudo\\s+apt(?:-get)?\\s+"), "apt-get ")
-            .replace(Regex("(?<![\\w-])apt\\s+"), "apt-get ")
-            .replace(
-                Regex("(?<![\\w-])apt-get\\s+(install|upgrade|full-upgrade|dist-upgrade|remove|autoremove|fix-broken)\\b"),
-                "apt-get -y -o Dpkg::Options::=--force-confold $1",
-            )
-        return "export DEBIAN_FRONTEND=noninteractive APT_LISTCHANGES_FRONTEND=none UCF_FORCE_CONFFOLD=1 NEEDRESTART_MODE=a TZ=Etc/UTC LC_ALL=C.UTF-8; $normalizedApt"
-    }
-
-    private fun shouldAutoConfirmPackageCommand(command: String, output: String): Boolean {
-        val packageCommand = Regex("(?i)(^|[;&|]\\s*)(sudo\\s+)?(apt|apt-get|dpkg)\\b").containsMatchIn(command)
-        if (!packageCommand) return false
-        val tail = output.takeLast(500)
-        return Regex("(?i)(do you want to continue|continue\\?)\\s*\\[[Yy]/[Nn]\\]").containsMatchIn(tail)
-    }
-
-    private fun isDestructiveTerminalCommand(command: String): Boolean {
-        val normalized = command.lowercase().replace(Regex("\\s+"), " ")
-        return listOf(
-            "rm -rf", "rm -fr", "git reset --hard", "git clean -f", "git push --force",
-            "mkfs", "dd if=", "chmod -r 777", "shutdown", "reboot", ":(){", "kill \$(pgrep", "pkill -f",
-        ).any(normalized::contains) || Regex("(curl|wget).*(\\||>)\\s*(sh|bash)").containsMatchIn(normalized)
-    }
-
-    private fun detectPreviewUrl(output: String): String? {
-        val match = Regex("https?://(?:localhost|127\\.0\\.0\\.1|0\\.0\\.0\\.0):(\\d{2,5})(?:/[^\\s]*)?")
-            .findAll(output)
-            .lastOrNull()
-            ?: return null
-        val port = match.groupValues[1].toIntOrNull()?.takeIf { it in 1..65535 } ?: return null
-        return "http://127.0.0.1:$port/"
-    }
-
-    private fun detectServerUrl(command: String): String? {
-        val match = Regex("""python(?:3)?\s+-m\s+http\.server(?:\s+(\d{2,5}))?""")
-            .find(command)
-            ?: return null
-        val port = match.groupValues.getOrNull(1)?.toIntOrNull() ?: 8000
-        return port.takeIf { it in 1..65535 }?.let { "http://127.0.0.1:$it/" }
-    }
-
-    private fun shellQuote(value: String): String = "'${value.replace("'", "'\\''")}'"
-
-    private fun terminalHistoryFile(projectId: String): File =
-        File(getApplication<Application>().filesDir, "terminal-history/$projectId.json")
-
-    private fun loadProjectTerminal(project: Project): ProjectTerminalSnapshot {
-        val file = terminalHistoryFile(project.id)
-        val guestRoot = projectGuestRoot(project)
-        if (!file.isFile) return ProjectTerminalSnapshot(cwd = guestRoot)
-        return runCatching {
-            val decoded = appJson.decodeFromString<ProjectTerminalSnapshot>(file.readText())
-            ProjectTerminalSnapshot(
-                lines = decoded.lines.map { line ->
-                    if (line.id.isBlank()) line.copy(id = UUID.randomUUID().toString()) else line
-                }.takeLast(MAX_PROJECT_TERMINAL_HISTORY),
-                cwd = decoded.cwd.takeIf { it == guestRoot || it.startsWith("$guestRoot/") } ?: guestRoot,
-            )
-        }.getOrDefault(ProjectTerminalSnapshot(cwd = guestRoot))
-    }
-
-    private fun saveProjectTerminal(projectId: String, cwd: String, lines: List<TerminalOutputLine>) {
-        runCatching {
-            val file = terminalHistoryFile(projectId)
-            file.parentFile?.mkdirs()
-            val bounded = lines.takeLast(MAX_PROJECT_TERMINAL_HISTORY).map { line ->
-                if (line.output.length > MAX_PROJECT_TERMINAL_OUTPUT) {
-                    line.copy(output = line.output.takeLast(MAX_PROJECT_TERMINAL_OUTPUT))
-                } else line
-            }
-            file.writeText(appJson.encodeToString(ProjectTerminalSnapshot(lines = bounded, cwd = cwd)))
-        }
-    }
-
     private fun projectGuestRoot(project: Project): String = "/workspace/${project.slug}"
 
     private fun projectWorkspaceRoot(project: Project): File {
@@ -1366,7 +889,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private fun completeFromReusableApk(action: AndroidAction, launch: Boolean): Boolean {
         val current = _state.value
         val project = current.activeProject ?: return false
-        if (current.isRunning || current.projectTerminalRunning || current.androidBuildRunning) return false
+        if (current.isRunning || current.androidBuildRunning) return false
         val workspace = findAndroidProjectRoot(projectWorkspaceRoot(project)) ?: return false
         val apk = findReusableDebugApk(workspace) ?: return false
         if (launch) {
@@ -1509,10 +1032,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             _state.update { it.copy(toastMessage = str(R.string.vm_wait_agent_before_build)) }
             return
         }
-        if (_state.value.projectTerminalRunning) {
-            _state.update { it.copy(toastMessage = str(R.string.vm_wait_terminal_before_build)) }
-            return
-        }
         val startedAt = System.currentTimeMillis()
         androidBuildStopRequested = false
         _androidBuildLog.value = ""
@@ -1561,7 +1080,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 val native = process as? NativeSpawnProcess ?: error(str(R.string.an_unsupported_build_process))
                 var offset = 0L
                 val buildLogBuffer = StringBuilder(_androidBuildLog.value)
-                val ansiCarry = StringBuilder()
+                val ansiCarry = AnsiTextSanitizer.StreamSanitizer()
                 val readBuffer = ByteArray(16 * 1024)
                 var lastBuildUiFlushAt = 0L
                 while (process.isAlive || native.outputFile.length() > offset) {
@@ -1577,8 +1096,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     }
                     if (count > 0) {
                         offset += count
-                        val chunk = consumeCompleteAnsiChunk(ansiCarry, readBuffer.decodeToString(0, count))
-                        buildLogBuffer.appendBoundedTerminal(chunk, MAX_ANDROID_BUILD_LOG)
+                        val chunk = ansiCarry.processChunk(readBuffer.decodeToString(0, count))
+                        buildLogBuffer.appendBoundedLog(chunk, MAX_ANDROID_BUILD_LOG)
                         val currentStage = _state.value.androidBuildStage
                         val nextStage = inferAndroidBuildStage(chunk, currentStage)
                         val now = SystemClock.elapsedRealtime()
@@ -1596,13 +1115,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         }
                     }
                 }
-                if (ansiCarry.isNotEmpty()) {
-                    buildLogBuffer.appendBoundedTerminal(sanitizeTerminalOutput(ansiCarry.toString()), MAX_ANDROID_BUILD_LOG)
-                    ansiCarry.clear()
+                val trailingAnsi = ansiCarry.flush()
+                if (trailingAnsi.isNotEmpty()) {
+                    buildLogBuffer.appendBoundedLog(trailingAnsi, MAX_ANDROID_BUILD_LOG)
                 }
                 _androidBuildLog.value = buildLogBuffer.toString()
                 val exitCode = process.waitFor()
-                val buildOutput = sanitizeTerminalOutput(native.outputFile.readTailText(MAX_PROCESS_OUTPUT_BYTES))
+                val buildOutput = AnsiTextSanitizer.strip(native.outputFile.readTailText(MAX_PROCESS_OUTPUT_BYTES))
                 finalExitCode = exitCode
                 finalOutput = buildOutput
                 if (androidBuildStopRequested) throw java.util.concurrent.CancellationException("Build cancelled")
@@ -1670,7 +1189,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 if (pendingFollowUps.isNotEmpty()) {
                     viewModelScope.launch {
                         delay(150)
-                        if (!_state.value.isRunning && !_state.value.androidBuildRunning && !_state.value.projectTerminalRunning) {
+                        if (!_state.value.isRunning && !_state.value.androidBuildRunning) {
                             startNextFollowUp()
                         }
                     }
@@ -2036,7 +1555,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     listOf("/usr/bin/bash", "-lc", command), projectGuestRoot(project), outputFile = outputFile,
                 )
                 val exit = process.waitFor()
-                exit to sanitizeTerminalOutput(outputFile.readTailText(64 * 1024)).trim()
+                exit to AnsiTextSanitizer.strip(outputFile.readTailText(64 * 1024)).trim()
             } finally { outputFile.delete() }
         }.getOrElse { -1 to (it.message ?: "Command failed") }
     }
@@ -2697,6 +2216,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             it.copy(
                 agentUpdating = kind,
                 agentUpdateMessage = str(R.string.vm_preparing_version, kind.localizedTitle(getApplication()), update.latestVersion),
+                agentUpdateLog = "$ ${str(R.string.vm_preparing_version, kind.localizedTitle(getApplication()), update.latestVersion)}",
                 agentUpdateProgress = 0f,
                 agentUpdateIndeterminate = false,
                 agentUpdateDownloadedBytes = null,
@@ -2722,6 +2242,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         _state.update {
                             it.copy(
                                 agentUpdateMessage = progress.message,
+                                agentUpdateLog = appendMiniTerminalLog(it.agentUpdateLog, progress.message),
                                 agentUpdateProgress = progress.fraction.coerceIn(0f, 1f),
                                 agentUpdateIndeterminate = progress.indeterminate,
                                 agentUpdateDownloadedBytes = bytes ?: it.agentUpdateDownloadedBytes,
@@ -2812,7 +2333,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         if (current.hostRuntimeUpdating || current.devStackInstalling != null ||
             current.agentInstalling != null || current.agentUpdating != null
         ) return
-        if (current.isRunning || current.projectTerminalRunning || _isTerminalRunning.value || current.androidBuildRunning) {
+        if (current.isRunning || projectTerminalSession.isRunning || quickTerminalSession.isRunning || current.androidBuildRunning) {
             _state.update { it.copy(toastMessage = "Stop active tasks or terminals before updating the host runtime.") }
             return
         }
@@ -2821,6 +2342,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 hostRuntimeUpdating = true,
                 hostRuntimeRepairing = force,
                 hostRuntimeMessage = if (force) "Repairing isolated host runtime…" else "Updating isolated host runtime…",
+                hostRuntimeLog = if (force) "$ Repairing isolated host runtime…" else "$ Updating isolated host runtime…",
                 hostRuntimeProgress = 0.02f,
                 hostRuntimeBytes = null,
                 hostRuntimeBytesPerSecond = null,
@@ -2857,6 +2379,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         _state.update { state ->
                             state.copy(
                                 hostRuntimeMessage = progress.message,
+                            hostRuntimeLog = appendMiniTerminalLog(state.hostRuntimeLog, progress.message),
                                 hostRuntimeProgress = progress.fraction.coerceIn(0f, 1f),
                                 hostRuntimeBytes = transfer,
                                 hostRuntimeBytesPerSecond = latestSpeed,
@@ -2987,7 +2510,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 check(process.waitFor() == 0) { str(R.string.vm_antigravity_list_models_failed) }
                 val output = (process as? NativeSpawnProcess)?.outputFile?.readTailText(MAX_PROCESS_OUTPUT_BYTES).orEmpty()
                 output.lineSequence()
-                    .map { sanitizeTerminalOutput(it).trim() }
+                    .map { AnsiTextSanitizer.strip(it).trim() }
                     .mapNotNull { line -> line.split(Regex("\\s+"), limit = 2).firstOrNull() }
                     .filter { it.matches(Regex("[a-z0-9][a-z0-9._-]+")) }
                     .distinct()
@@ -3042,6 +2565,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 devStackInstalling = stack,
                 devStackRemoving = false,
                 devStackMessage = str(R.string.vm_preparing_named, stack.localizedLabel(getApplication())),
+                devStackLog = "$ ${str(R.string.vm_preparing_named, stack.localizedLabel(getApplication()))}",
                 devStackProgress = 0f,
                 devStackBytes = null,
                 devStackBytesPerSecond = null,
@@ -3078,6 +2602,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         _state.update { current ->
                             current.copy(
                                 devStackMessage = progress.message,
+                                devStackLog = appendMiniTerminalLog(current.devStackLog, progress.message),
                                 devStackProgress = progress.fraction.coerceIn(0f, 1f),
                                 devStackBytes = transfer,
                                 devStackBytesPerSecond = latestSpeed,
@@ -3108,7 +2633,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     /** Removes an optional toolchain after the Settings confirmation dialog. */
     fun removeDevStack(stack: DevStack) {
         if (_state.value.devStackInstalling != null) return
-        if (_state.value.isRunning || _state.value.projectTerminalRunning) {
+        if (_state.value.isRunning) {
             _state.update { it.copy(toastMessage = str(R.string.vm_stop_before_removing_tools)) }
             return
         }
@@ -3117,6 +2642,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 devStackInstalling = stack,
                 devStackRemoving = true,
                 devStackMessage = str(R.string.vm_removing_named, stack.localizedLabel(getApplication())),
+                devStackLog = "$ ${str(R.string.vm_removing_named, stack.localizedLabel(getApplication()))}",
                 devStackProgress = 0.1f,
                 devStackBytes = null,
                 devStackBytesPerSecond = null,
@@ -3129,6 +2655,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         _state.update { current ->
                             current.copy(
                                 devStackMessage = progress.message,
+                                devStackLog = appendMiniTerminalLog(current.devStackLog, progress.message),
                                 devStackProgress = progress.fraction.coerceIn(0f, 1f),
                             )
                         }
@@ -3317,7 +2844,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
             return
         }
-        if (current.isRunning || current.projectTerminalRunning || current.androidBuildRunning) {
+        if (current.isRunning || current.androidBuildRunning) {
             val chats = preferences.loadProjectChats(project.id).ifEmpty {
                 listOf(ProjectChat(title = str(R.string.vm_main_chat)))
             }
@@ -3333,7 +2860,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
         configureBridgeRoots(project.id, project.rootPath)
-        val terminal = loadProjectTerminal(project)
         val suggestedRoot = if (project.rootPath.isBlank()) detectNestedProjectRoot(project) else null
         val chats = preferences.loadProjectChats(project.id).ifEmpty {
             listOf(ProjectChat(title = str(R.string.vm_main_chat))).also { preferences.saveProjectChats(project.id, it) }
@@ -3342,7 +2868,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val saved = preferences.loadMessages(project.id, activeChat.id)
         val msgs = saved.ifEmpty { listOf(ChatMessage(fromUser = false, text = "Hi! Tell me what you want to build or change.")) }
         val androidBuild = loadAndroidBuildRecord(project.id)
-        _projectTerminalLiveOutput.value = ""
         _androidBuildLog.value = androidBuild.log
         _state.update {
             it.copy(
@@ -3362,12 +2887,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 workspaceFiles = emptyList(),
                 androidProjectDetected = false,
                 filesLoading = true,
-                projectTerminalLines = terminal.lines,
-                projectTerminalRunning = false,
-                projectTerminalCwd = terminal.cwd,
-                projectTerminalCommand = null,
-                projectTerminalDraft = null,
-                pendingTerminalCommand = null,
                 suggestedProjectRoot = suggestedRoot,
                 previewReady = false,
                 previewUrl = null,
@@ -3391,15 +2910,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun closeProject() {
         val active = _state.value.activeProject
         persistMessages()
-        if (_state.value.isRunning || _state.value.projectTerminalRunning || _state.value.androidBuildRunning) {
+        if (_state.value.isRunning || _state.value.androidBuildRunning) {
             _state.update {
                 it.copy(
                     workspaceVisible = false,
-                    toastMessage = when {
-                        it.isRunning -> str(R.string.vm_task_continues_background)
-                        it.androidBuildRunning -> str(R.string.an_build_continues_background)
-                        projectTerminalStopRequested -> null
-                        else -> str(R.string.vm_terminal_continues_background)
+                    toastMessage = if (it.isRunning) {
+                        str(R.string.vm_task_continues_background)
+                    } else {
+                        str(R.string.an_build_continues_background)
                     },
                 )
             }
@@ -3416,19 +2934,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }.count()
             } else 0
 
-            if (userMessages == 0 && userFiles == 0 && !_state.value.isRunning && !_state.value.projectTerminalRunning) {
+            if (userMessages == 0 && userFiles == 0 && !_state.value.isRunning) {
                 // Unused empty project; delete immediately so it does not clutter the project list.
                 _state.update { current -> current.copy(projects = current.projects.filterNot { it.id == active.id }) }
                 preferences.saveProjects(_state.value.projects)
                 viewModelScope.launch(Dispatchers.IO) {
                     workspaceDir.deleteRecursively()
-                    terminalHistoryFile(active.id).delete()
                     preferences.deleteProjectChats(active.id)
                 }
             }
         }
 
-        _projectTerminalLiveOutput.value = ""
+        projectTerminalSession.terminate()
         _state.update {
             it.copy(
                 activeProject = null,
@@ -3441,12 +2958,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 isRunning = false,
                 activeSessionId = null,
                 pendingApproval = null,
-                projectTerminalLines = emptyList(),
-                projectTerminalRunning = false,
-                projectTerminalCwd = "/workspace",
-                projectTerminalCommand = null,
-                projectTerminalDraft = null,
-                pendingTerminalCommand = null,
                 suggestedProjectRoot = null,
                 previewReady = false,
                 previewUrl = null,
@@ -3478,7 +2989,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun activateReadOnlyProject() {
-        if (_state.value.isRunning || _state.value.projectTerminalRunning || _state.value.androidBuildRunning) return
+        if (_state.value.isRunning || _state.value.androidBuildRunning) return
         val project = _state.value.readOnlyProject ?: return
         closeReadOnlyProject()
         openProject(project)
@@ -3488,7 +2999,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun createProject(name: String) {
         if (name.isBlank()) return
-        if (_state.value.isRunning || _state.value.projectTerminalRunning || _state.value.androidBuildRunning) {
+        if (_state.value.isRunning || _state.value.androidBuildRunning) {
             _state.update { it.copy(toastMessage = str(R.string.vm_stop_before_new_project)) }
             return
         }
@@ -3504,8 +3015,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             slug = slug,
         )
         configureBridgeRoots(project.id, project.rootPath)
-        val guestRoot = projectGuestRoot(project)
-        _projectTerminalLiveOutput.value = ""
         _state.update {
             it.copy(
                 projects = listOf(project) + it.projects,
@@ -3519,12 +3028,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 workspaceFiles = emptyList(),
                 androidProjectDetected = false,
                 filesLoading = true,
-                projectTerminalLines = emptyList(),
-                projectTerminalRunning = false,
-                projectTerminalCwd = guestRoot,
-                projectTerminalCommand = null,
-                projectTerminalDraft = null,
-                pendingTerminalCommand = null,
                 suggestedProjectRoot = null,
                 previewReady = false,
                 previewUrl = null,
@@ -3540,7 +3043,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun createAndroidProject(name: String, template: AndroidTemplate) {
         if (name.isBlank()) return
-        if (_state.value.isRunning || _state.value.projectTerminalRunning || _state.value.androidBuildRunning) {
+        if (_state.value.isRunning || _state.value.androidBuildRunning) {
             _state.update { it.copy(toastMessage = str(R.string.an_stop_before_new_project)) }
             return
         }
@@ -3575,7 +3078,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun createQuickProject() {
-        if (_state.value.isRunning || _state.value.projectTerminalRunning || _state.value.androidBuildRunning) {
+        if (_state.value.isRunning || _state.value.androidBuildRunning) {
             _state.update { it.copy(toastMessage = str(R.string.vm_stop_before_new_project)) }
             return
         }
@@ -3596,7 +3099,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun importZipProject(uri: Uri) {
-        if (_state.value.projectImporting || _state.value.isRunning || _state.value.projectTerminalRunning || _state.value.androidBuildRunning) return
+        if (_state.value.projectImporting || _state.value.isRunning || _state.value.androidBuildRunning) return
         _state.update { it.copy(projectImporting = true, projectImportMessage = str(R.string.vm_reading_archive)) }
         viewModelScope.launch {
             val result = withContext(Dispatchers.IO) { runCatching { extractImportedProject(uri) } }
@@ -3759,7 +3262,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun cloneGitRepository(url: String, repositoryName: String?, branch: String?, useGitHubCli: Boolean) {
-        if (_state.value.gitCloneRunning || _state.value.projectImporting || _state.value.isRunning || _state.value.projectTerminalRunning || _state.value.androidBuildRunning) return
+        if (_state.value.gitCloneRunning || _state.value.projectImporting || _state.value.isRunning || _state.value.androidBuildRunning) return
         val normalized = runCatching { validateGitUrl(url) }.getOrElse { error ->
             _state.update { it.copy(toastMessage = error.message ?: str(R.string.vm_invalid_git_url)) }
             return
@@ -3899,7 +3402,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                                 RandomAccessFile(outputFile, "r").use { file -> file.seek(offset); file.readFully(bytes) }
                                 offset += count
                                 captured.append(bytes.toString(Charsets.UTF_8))
-                                val clean = sanitizeTerminalOutput(captured.toString()).takeLast(20_000)
+                                val clean = AnsiTextSanitizer.strip(captured.toString()).takeLast(20_000)
                                 val code = GITHUB_DEVICE_CODE.find(clean)?.value
                                 if (code != null && !browserOpened) {
                                     browserOpened = true
@@ -3924,7 +3427,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         }
                         val exit = process.waitFor()
                         check(exit == 0) {
-                            sanitizeTerminalOutput(captured.toString()).lineSequence().lastOrNull { it.isNotBlank() }
+                            AnsiTextSanitizer.strip(captured.toString()).lineSequence().lastOrNull { it.isNotBlank() }
                                 ?: str(R.string.vm_github_signin_failed_exit, exit)
                         }
                     } finally {
@@ -4080,7 +3583,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 outputFile = outputFile,
             )
             val exit = process.waitFor()
-            exit to sanitizeTerminalOutput(outputFile.readTailText(MAX_PROCESS_OUTPUT_BYTES)).trim()
+            exit to AnsiTextSanitizer.strip(outputFile.readTailText(MAX_PROCESS_OUTPUT_BYTES)).trim()
         } finally {
             outputFile.delete()
         }
@@ -4173,14 +3676,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun deleteProject(projectId: String) {
         val project = _state.value.projects.firstOrNull { it.id == projectId } ?: return
-        if (_state.value.activeProject?.id == projectId || _state.value.isRunning || _state.value.projectTerminalRunning || _state.value.androidBuildRunning) return
+        if (_state.value.activeProject?.id == projectId || _state.value.isRunning || _state.value.androidBuildRunning) return
         _state.update { current -> current.copy(projects = current.projects.filterNot { it.id == projectId }) }
         preferences.saveProjects(_state.value.projects)
         folderMetadataCache.keys.removeAll { it.startsWith("$projectId:") }
         viewModelScope.launch(Dispatchers.IO) {
             val filesDir = getApplication<Application>().filesDir
             File(filesDir, "workspaces/${project.id}").deleteRecursively()
-            terminalHistoryFile(project.id).delete()
             androidBuildRecordFile(project.id).delete()
             preferences.deleteProjectChats(project.id)
         }
@@ -4203,29 +3705,27 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val current = _state.value
         val project = current.activeProject ?: return
         val root = current.suggestedProjectRoot ?: return
-        if (current.isRunning || current.projectTerminalRunning) return
+        if (current.isRunning) return
         val updated = project.copy(rootPath = root)
         configureBridgeRoots(updated.id, updated.rootPath)
         val projects = current.projects.map { if (it.id == updated.id) updated else it }
-        val guestRoot = projectGuestRoot(updated)
         preferences.saveProjects(projects)
-        saveProjectTerminal(updated.id, guestRoot, current.projectTerminalLines)
         _state.update {
             it.copy(
                 projects = projects,
                 activeProject = updated,
                 suggestedProjectRoot = null,
-                projectTerminalCwd = guestRoot,
                 toastMessage = str(R.string.vm_project_root_set, root),
             )
         }
+        projectTerminalSession.restart(updated.id)
         refreshProjectFiles()
     }
 
     fun exportActiveProject(uri: Uri, selection: ExportSelection) {
         val current = _state.value
         val project = current.activeProject ?: return
-        if (current.isRunning || current.projectTerminalRunning || current.androidBuildRunning ||
+        if (current.isRunning || current.androidBuildRunning ||
             current.projectExportRunning || current.openedFile?.saving == true
         ) {
             _state.update { it.copy(toastMessage = str(R.string.export_busy)) }
@@ -4436,7 +3936,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val current = _state.value
         val opened = current.openedFile ?: return
         if (opened.loading || opened.readOnlyReason != null || opened.content == null ||
-            current.isRunning || current.projectTerminalRunning || current.androidBuildRunning
+            current.isRunning || current.androidBuildRunning
         ) return
         _state.update { it.copy(openedFile = opened.copy(editing = true, draft = opened.content, dirty = false, conflict = false)) }
     }
@@ -4468,8 +3968,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val current = _state.value
         val project = current.activeProject ?: return
         val opened = current.openedFile ?: return
-        if (!opened.editing || opened.saving || !opened.dirty || current.isRunning ||
-            current.projectTerminalRunning || current.androidBuildRunning
+        if (!opened.editing || opened.saving || !opened.dirty || current.isRunning || current.androidBuildRunning
         ) return
         _state.update { it.copy(openedFile = opened.copy(saving = true, conflict = false)) }
         viewModelScope.launch {
@@ -4706,7 +4205,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun fileOpsBlocked(): Boolean {
         val current = _state.value
-        val busy = current.isRunning || current.projectTerminalRunning || current.androidBuildRunning ||
+        val busy = current.isRunning || current.androidBuildRunning ||
             current.projectExportRunning
         if (busy) _state.update { it.copy(toastMessage = str(R.string.fm_busy)) }
         return busy
@@ -5044,10 +4543,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         if (prompt.isBlank() && attachments.isEmpty()) return
         if (state.value.isRunning || state.value.androidBuildRunning) {
             queueFollowUp(project, prompt, attachments)
-            return
-        }
-        if (state.value.projectTerminalRunning) {
-            _state.update { it.copy(toastMessage = str(R.string.an_wait_terminal_then_send)) }
             return
         }
         startPrompt(project, prompt, attachments)
@@ -5901,6 +5396,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     override fun onCleared() {
         stopAndroidLogcat()
+        quickTerminalSession.terminate()
+        projectTerminalSession.terminate()
         super.onCleared()
     }
 
@@ -5921,11 +5418,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         private const val RECENT_EXIT_CACHE_MS = 60_000L
         private const val MINIMUM_INITIALIZATION_SCREEN_MS = 3_000L
         private const val MAX_EDITABLE_FILE_BYTES = 512_000L
-        private const val MAX_PROJECT_TERMINAL_HISTORY = 100
-        private const val MAX_PROJECT_TERMINAL_OUTPUT = 200_000
         private const val MAX_ANDROID_BUILD_LOG = 300_000
         private const val MAX_LOGCAT_LINES = 5_000
-        private const val MEMORY_PRESSURE_TERMINAL_LINES = 20
         private const val MEMORY_PRESSURE_LOGCAT_LINES = 500
         private const val MEMORY_PRESSURE_TEXT_CHARS = 64 * 1024
         const val LOGCAT_GRANT_COMMAND = "adb shell pm grant com.jarves.mh android.permission.READ_LOGS"

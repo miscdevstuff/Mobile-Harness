@@ -9,13 +9,9 @@
     <string name="vm_process_exited_code">Процесс завершился с кодом %1$d</string>
     <string name="vm_error_with_message">Ошибка: %1$s</string>
     <string name="vm_android_tools_missing">Инструменты сборки Android не установлены. Добавьте Android в Настройки → Среды разработки.</string>
-    <string name="vm_terminal_error">Ошибка терминала: %1$s</string>
     <string name="vm_project_unavailable">Проект больше недоступен.</string>
-    <string name="vm_unsupported_terminal_process">Неподдерживаемый процесс терминала.</string>
-    <string name="vm_process_not_accepting_input">Этот процесс больше не принимает ввод.</string>
     <string name="vm_unsafe_project_root">Небезопасный корень проекта</string>
     <string name="vm_wait_agent_before_build">Дождитесь, пока Claude закончит создание проекта, прежде чем собирать.</string>
-    <string name="vm_wait_terminal_before_build">Дождитесь завершения команды в терминале проекта, прежде чем собирать.</string>
     <string name="vm_building_debug_apk">Сборка отладочного APK…</string>
     <string name="vm_no_android_project">Проект Android Gradle пока не найден. Попросите Claude создать его и дождитесь завершения задачи.</string>
     <string name="vm_gradle_build_failed">Сборка Gradle не удалась (код выхода %1$d)</string>
@@ -68,7 +64,6 @@
     <string name="vm_main_chat">Основной чат</string>
     <string name="vm_new_chat">Новый чат</string>
     <string name="vm_task_continues_background">Задача продолжается в фоне</string>
-    <string name="vm_terminal_continues_background">Команда терминала продолжается в фоне</string>
     <string name="vm_stop_before_new_project">Остановите фоновую задачу перед созданием нового проекта</string>
     <string name="vm_starter_web_project">Стартовый веб-проект</string>
     <string name="vm_language_general">Общий</string>
@@ -189,8 +184,4 @@
     </plurals>
     <string name="vm_claude_hello">Просим Claude Code ответить…</string>
     <string name="vm_claude_working">Подписка Claude работает!</string>
-    <string name="ws_terminal_leave_title">Терминал всё ещё работает</string>
-    <string name="ws_terminal_leave_body">«%1$s» всё ещё выполняется в терминале.</string>
-    <string name="ws_terminal_leave_stop">Остановить и выйти</string>
-    <string name="ws_terminal_leave_keep">Оставить работать</string>
 </resources>

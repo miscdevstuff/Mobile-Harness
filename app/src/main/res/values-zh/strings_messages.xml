@@ -9,13 +9,9 @@
     <string name="vm_process_exited_code">进程已退出，代码 %1$d</string>
     <string name="vm_error_with_message">错误：%1$s</string>
     <string name="vm_android_tools_missing">未安装 Android 构建工具。请在 设置 → 开发环境 中添加 Android。</string>
-    <string name="vm_terminal_error">终端错误：%1$s</string>
     <string name="vm_project_unavailable">项目已不可用。</string>
-    <string name="vm_unsupported_terminal_process">不支持的终端进程。</string>
-    <string name="vm_process_not_accepting_input">此进程已不再接受输入。</string>
     <string name="vm_unsafe_project_root">不安全的项目根目录</string>
     <string name="vm_wait_agent_before_build">请等待 Claude 完成项目创建后再构建。</string>
-    <string name="vm_wait_terminal_before_build">请等待项目终端命令完成后再构建。</string>
     <string name="vm_building_debug_apk">正在构建调试版 APK…</string>
     <string name="vm_no_android_project">尚未找到 Android Gradle 项目。请让 Claude 创建它，然后等待任务完成。</string>
     <string name="vm_gradle_build_failed">Gradle 构建失败（退出代码 %1$d）</string>
@@ -68,7 +64,6 @@
     <string name="vm_main_chat">主聊天</string>
     <string name="vm_new_chat">新聊天</string>
     <string name="vm_task_continues_background">任务将在后台继续</string>
-    <string name="vm_terminal_continues_background">终端命令将在后台继续</string>
     <string name="vm_stop_before_new_project">创建其他项目前请先停止后台任务</string>
     <string name="vm_starter_web_project">入门 Web 项目</string>
     <string name="vm_language_general">通用</string>
@@ -180,8 +175,4 @@
     </plurals>
     <string name="vm_claude_hello">正在请求 Claude Code 回复…</string>
     <string name="vm_claude_working">Claude 订阅可用！</string>
-    <string name="ws_terminal_leave_title">终端仍在运行</string>
-    <string name="ws_terminal_leave_body">“%1$s”仍在终端中运行。</string>
-    <string name="ws_terminal_leave_stop">停止并返回</string>
-    <string name="ws_terminal_leave_keep">继续运行</string>
 </resources>

@@ -68,8 +68,6 @@
     <string name="runtime_environment">البيئة</string>
     <string name="runtime_active_agent">الوكيل النشط</string>
     <string name="runtime_installed_agents">الوكلاء المثبتون</string>
-    <string name="runtime_clear_history">مسح سجل الطرفية</string>
-    <string name="runtime_history_cleared">تم مسح سجل الطرفية</string>
     <string name="runtime_advanced_reliability">موثوقية التشغيل المتقدمة</string>
 
     <!-- Provider & Connection -->

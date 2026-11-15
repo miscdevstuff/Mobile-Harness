@@ -26,13 +26,6 @@
     <string name="ws_terminal_linux_title">Terminal Linux</string>
     <string name="ws_terminal_linux_subtitle">Ubuntu 20.04 · Entorno aislado PRoot</string>
     <string name="ws_terminal_clear_output">Borrar salida</string>
-    <string name="ws_terminal_previous_command">Comando anterior</string>
-    <string name="ws_terminal_next_command">Comando siguiente</string>
-    <string name="ws_terminal_cursor_left">Mover el cursor a la izquierda</string>
-    <string name="ws_terminal_cursor_right">Mover el cursor a la derecha</string>
-    <string name="ws_terminal_alt_modifier">Modificador Alt</string>
-    <string name="ws_terminal_escape">Escape</string>
-    <string name="ws_terminal_ctrl_modifier">Modificador Control; pulsa C para interrumpir</string>
     <string name="ws_md_code_label">código</string>
     <string name="ws_md_run_in_terminal">Ejecutar en la terminal del proyecto</string>
     <string name="ws_md_copy_code">Copiar código</string>
@@ -91,7 +84,6 @@
     <string name="ws_later">Más tarde</string>
     <string name="ws_ping_api">Probar API</string>
     <string name="ws_task_running">Tarea en curso</string>
-    <string name="ws_terminal_running">Terminal en ejecución</string>
     <string name="ws_project_options">Opciones del proyecto</string>
     <string name="ws_rename_project">Renombrar proyecto</string>
     <string name="ws_delete_project">Eliminar proyecto</string>
@@ -100,9 +92,6 @@
     <string name="ws_history">Historial</string>
     <string name="ws_project_chats">Chats del proyecto</string>
     <string name="ws_allow_app_installs">Permite la instalación de apps para ejecutar proyectos de Android</string>
-    <string name="ws_destructive_title">¿Ejecutar un comando potencialmente destructivo?</string>
-    <string name="ws_destructive_desc">Este comando puede eliminar archivos, reescribir el historial de Git o cambiar el proyecto de forma significativa.</string>
-    <string name="ws_run_anyway">Ejecutar de todos modos</string>
     <string name="ws_build_run_android">Compilar y ejecutar la app de Android</string>
     <string name="ws_new_chat">Nuevo chat</string>
     <string name="ws_finish_task_before_switch">Termina la tarea en curso antes de cambiar de chat.</string>
@@ -158,4 +147,5 @@
     <string name="ws_preview_external_blocked">La navegación externa está bloqueada en la vista previa del proyecto</string>
     <string name="ws_open_url">Abrir URL</string>
     <string name="ws_refresh_preview">Actualizar vista previa</string>
+    <string name="ws_terminal_new_session">New session</string>
 </resources>

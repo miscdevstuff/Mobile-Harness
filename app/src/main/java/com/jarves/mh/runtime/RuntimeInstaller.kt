@@ -10,6 +10,7 @@ import com.jarves.mh.runtime.installer.AgentInstaller
 import com.jarves.mh.runtime.installer.HostRuntimeInstaller
 import com.jarves.mh.runtime.installer.HostRuntimeManifest
 import com.jarves.mh.runtime.installer.HostRuntimeUpdateInfo
+import com.jarves.mh.runtime.installer.TerminalLaunchSpec
 import com.jarves.mh.runtime.installer.RuntimeArchiveExtractor
 import com.jarves.mh.runtime.installer.StackInstaller
 import com.jarves.mh.ui.AppStrings
@@ -296,6 +297,19 @@ class RuntimeInstaller(private val context: Context) {
         onProgress(RuntimeInstallProgress(str(R.string.rt_install_runtime_ready), 1f))
         return installed
     }
+
+    fun terminalLaunchSpec(
+        workspace: File,
+        guestWorkspacePath: String = "/workspace",
+    ): TerminalLaunchSpec = hostInstaller.terminalLaunchSpec(
+        workspace = workspace,
+        guestWorkspacePath = guestWorkspacePath,
+        androidToolsReady = stackInstaller.isAndroidToolsReady(),
+        onBeforeLaunch = {
+            stackInstaller.writeAndroidGradleConfiguration()
+            agentInstaller.ensureWorkspaceTrust(guestWorkspacePath)
+        },
+    )
 
     fun process(
         proot: File,

@@ -572,9 +572,12 @@ printf '%s\n' '{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decis
         ensureWorkspaceTrust("/workspace")
     }
 
+    private val trustedWorkspaces = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+
     fun ensureWorkspaceTrust(workspacePath: String) {
         if (!rootfs.isDirectory) return
         val stateFile = File(rootfs, "root/.claude.json")
+        if (workspacePath in trustedWorkspaces && stateFile.isFile) return
         val state = runCatching { JSONObject(stateFile.readText()) }.getOrElse { JSONObject() }
         listOf("disableAllHooks", "permissions", "hooks", "allowedTools", "autoApprove").forEach(state::remove)
         val projects = state.optJSONObject("projects") ?: JSONObject()
@@ -584,6 +587,7 @@ printf '%s\n' '{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decis
         state.put("projects", projects)
         stateFile.parentFile?.mkdirs()
         stateFile.writeText(state.toString())
+        trustedWorkspaces.add(workspacePath)
     }
 
     private fun fetchLatestOpencodeV2Version(): String? {

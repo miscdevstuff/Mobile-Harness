@@ -9,13 +9,9 @@
     <string name="vm_process_exited_code">प्रोसेस कोड %1$d के साथ बंद हुआ</string>
     <string name="vm_error_with_message">त्रुटि: %1$s</string>
     <string name="vm_android_tools_missing">Android बिल्ड टूल इंस्टॉल नहीं हैं। सेटिंग्स → डेवलपमेंट स्टैक में Android जोड़ें।</string>
-    <string name="vm_terminal_error">टर्मिनल त्रुटि: %1$s</string>
     <string name="vm_project_unavailable">प्रोजेक्ट अब उपलब्ध नहीं है।</string>
-    <string name="vm_unsupported_terminal_process">असमर्थित टर्मिनल प्रोसेस।</string>
-    <string name="vm_process_not_accepting_input">यह प्रोसेस अब इनपुट स्वीकार नहीं कर रहा है।</string>
     <string name="vm_unsafe_project_root">असुरक्षित प्रोजेक्ट रूट</string>
     <string name="vm_wait_agent_before_build">बिल्ड करने से पहले Claude के प्रोजेक्ट बनाना पूरा करने की प्रतीक्षा करें।</string>
-    <string name="vm_wait_terminal_before_build">बिल्ड करने से पहले प्रोजेक्ट टर्मिनल कमांड के पूरा होने की प्रतीक्षा करें।</string>
     <string name="vm_building_debug_apk">डीबग APK बन रहा है…</string>
     <string name="vm_no_android_project">अभी तक कोई Android Gradle प्रोजेक्ट नहीं मिला। Claude से इसे बनाने के लिए कहें, फिर टास्क पूरा होने की प्रतीक्षा करें।</string>
     <string name="vm_gradle_build_failed">Gradle बिल्ड विफल रहा (एग्ज़िट कोड %1$d)</string>
@@ -68,7 +64,6 @@
     <string name="vm_main_chat">मुख्य चैट</string>
     <string name="vm_new_chat">नई चैट</string>
     <string name="vm_task_continues_background">टास्क बैकग्राउंड में जारी है</string>
-    <string name="vm_terminal_continues_background">टर्मिनल कमांड बैकग्राउंड में जारी है</string>
     <string name="vm_stop_before_new_project">दूसरा प्रोजेक्ट बनाने से पहले बैकग्राउंड टास्क रोकें</string>
     <string name="vm_starter_web_project">स्टार्टर वेब प्रोजेक्ट</string>
     <string name="vm_language_general">सामान्य</string>
@@ -183,8 +178,4 @@
     </plurals>
     <string name="vm_claude_hello">Claude Code से जवाब माँगा जा रहा है…</string>
     <string name="vm_claude_working">Claude सब्सक्रिप्शन काम कर रहा है!</string>
-    <string name="ws_terminal_leave_title">टर्मिनल अभी चल रहा है</string>
-    <string name="ws_terminal_leave_body">टर्मिनल में “%1$s” अभी चल रहा है।</string>
-    <string name="ws_terminal_leave_stop">रोकें और वापस जाएं</string>
-    <string name="ws_terminal_leave_keep">चलने दें</string>
 </resources>

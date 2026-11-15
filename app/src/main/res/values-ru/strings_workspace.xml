@@ -26,13 +26,6 @@
     <string name="ws_terminal_linux_title">Терминал Linux</string>
     <string name="ws_terminal_linux_subtitle">Ubuntu 20.04 · Песочница PRoot</string>
     <string name="ws_terminal_clear_output">Очистить вывод</string>
-    <string name="ws_terminal_previous_command">Предыдущая команда</string>
-    <string name="ws_terminal_next_command">Следующая команда</string>
-    <string name="ws_terminal_cursor_left">Переместить курсор влево</string>
-    <string name="ws_terminal_cursor_right">Переместить курсор вправо</string>
-    <string name="ws_terminal_alt_modifier">Модификатор Alt</string>
-    <string name="ws_terminal_escape">Escape</string>
-    <string name="ws_terminal_ctrl_modifier">Модификатор Control; нажмите C для прерывания</string>
     <string name="ws_md_code_label">код</string>
     <string name="ws_md_run_in_terminal">Запустить в терминале проекта</string>
     <string name="ws_md_copy_code">Копировать код</string>
@@ -91,7 +84,6 @@
     <string name="ws_later">Позже</string>
     <string name="ws_ping_api">Проверить API</string>
     <string name="ws_task_running">Задача выполняется</string>
-    <string name="ws_terminal_running">Терминал работает</string>
     <string name="ws_project_options">Параметры проекта</string>
     <string name="ws_rename_project">Переименовать проект</string>
     <string name="ws_delete_project">Удалить проект</string>
@@ -100,9 +92,6 @@
     <string name="ws_history">История</string>
     <string name="ws_project_chats">Чаты проекта</string>
     <string name="ws_allow_app_installs">Разрешите установку приложений, чтобы запускать Android-проекты</string>
-    <string name="ws_destructive_title">Выполнить потенциально опасную команду?</string>
-    <string name="ws_destructive_desc">Эта команда может удалить файлы, переписать историю Git или существенно изменить проект.</string>
-    <string name="ws_run_anyway">Всё равно выполнить</string>
     <string name="ws_build_run_android">Собрать и запустить Android-приложение</string>
     <string name="ws_new_chat">Новый чат</string>
     <string name="ws_finish_task_before_switch">Завершите текущую задачу, прежде чем переключать чаты.</string>
@@ -158,4 +147,5 @@
     <string name="ws_preview_external_blocked">Переход на внешние сайты в предпросмотре проекта заблокирован</string>
     <string name="ws_open_url">Открыть URL</string>
     <string name="ws_refresh_preview">Обновить предпросмотр</string>
+    <string name="ws_terminal_new_session">New session</string>
 </resources>

@@ -143,6 +143,22 @@ class AppPreferences(private val context: Context) {
         get() = preferences.getString("theme_mode", "dark") ?: "dark"
         set(value) { preferences.edit().putString("theme_mode", value).apply() }
 
+    var terminalFontSizeSp: Int
+        get() = preferences.getInt("terminal_font_size_sp", 13).coerceIn(9, 24)
+        set(value) { preferences.edit().putInt("terminal_font_size_sp", value.coerceIn(9, 24)).apply() }
+
+    var terminalCursorStyle: Int
+        get() = preferences.getInt("terminal_cursor_style", 0).coerceIn(0, 2)
+        set(value) { preferences.edit().putInt("terminal_cursor_style", value.coerceIn(0, 2)).apply() }
+
+    var terminalCursorBlink: Boolean
+        get() = preferences.getBoolean("terminal_cursor_blink", true)
+        set(value) { preferences.edit().putBoolean("terminal_cursor_blink", value).apply() }
+
+    var terminalShowExtraKeys: Boolean
+        get() = preferences.getBoolean("terminal_show_extra_keys", true)
+        set(value) { preferences.edit().putBoolean("terminal_show_extra_keys", value).apply() }
+
     var languageCode: String
         get() = preferences.getString("language_code", "system") ?: "system"
         set(value) { preferences.edit().putString("language_code", value).apply() }

@@ -26,13 +26,6 @@
     <string name="ws_terminal_linux_title">Linux टर्मिनल</string>
     <string name="ws_terminal_linux_subtitle">Ubuntu 20.04 · PRoot सैंडबॉक्स</string>
     <string name="ws_terminal_clear_output">आउटपुट साफ़ करें</string>
-    <string name="ws_terminal_previous_command">पिछली कमांड</string>
-    <string name="ws_terminal_next_command">अगली कमांड</string>
-    <string name="ws_terminal_cursor_left">कर्सर बाईं ओर ले जाएं</string>
-    <string name="ws_terminal_cursor_right">कर्सर दाईं ओर ले जाएं</string>
-    <string name="ws_terminal_alt_modifier">Alt मॉडिफ़ायर</string>
-    <string name="ws_terminal_escape">एस्केप</string>
-    <string name="ws_terminal_ctrl_modifier">Control मॉडिफ़ायर; रोकने के लिए C दबाएं</string>
     <string name="ws_md_code_label">कोड</string>
     <string name="ws_md_run_in_terminal">प्रोजेक्ट टर्मिनल में चलाएं</string>
     <string name="ws_md_copy_code">कोड कॉपी करें</string>
@@ -91,7 +84,6 @@
     <string name="ws_later">बाद में</string>
     <string name="ws_ping_api">API पिंग करें</string>
     <string name="ws_task_running">कार्य चल रहा है</string>
-    <string name="ws_terminal_running">टर्मिनल चल रहा है</string>
     <string name="ws_project_options">प्रोजेक्ट विकल्प</string>
     <string name="ws_rename_project">प्रोजेक्ट का नाम बदलें</string>
     <string name="ws_delete_project">प्रोजेक्ट हटाएं</string>
@@ -100,9 +92,6 @@
     <string name="ws_history">इतिहास</string>
     <string name="ws_project_chats">प्रोजेक्ट चैट</string>
     <string name="ws_allow_app_installs">Android प्रोजेक्ट चलाने के लिए ऐप इंस्टॉल की अनुमति दें</string>
-    <string name="ws_destructive_title">संभावित रूप से विनाशकारी कमांड चलाएं?</string>
-    <string name="ws_destructive_desc">यह कमांड फ़ाइलें हटा सकता है, Git इतिहास दोबारा लिख सकता है, या प्रोजेक्ट को काफ़ी बदल सकता है।</string>
-    <string name="ws_run_anyway">फिर भी चलाएं</string>
     <string name="ws_build_run_android">Android ऐप बनाएं और चलाएं</string>
     <string name="ws_new_chat">नई चैट</string>
     <string name="ws_finish_task_before_switch">चैट बदलने से पहले चल रहा कार्य पूरा करें।</string>
@@ -158,4 +147,5 @@
     <string name="ws_preview_external_blocked">प्रोजेक्ट प्रीव्यू में बाहरी नेविगेशन अवरुद्ध है</string>
     <string name="ws_open_url">URL खोलें</string>
     <string name="ws_refresh_preview">प्रीव्यू रीफ़्रेश करें</string>
+    <string name="ws_terminal_new_session">New session</string>
 </resources>

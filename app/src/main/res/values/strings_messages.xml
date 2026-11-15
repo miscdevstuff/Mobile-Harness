@@ -9,13 +9,9 @@
     <string name="vm_process_exited_code">Process exited with code %1$d</string>
     <string name="vm_error_with_message">Error: %1$s</string>
     <string name="vm_android_tools_missing">Android build tools are not installed. Add Android in Settings → Development stacks.</string>
-    <string name="vm_terminal_error">Terminal error: %1$s</string>
     <string name="vm_project_unavailable">Project is no longer available.</string>
-    <string name="vm_unsupported_terminal_process">Unsupported terminal process.</string>
-    <string name="vm_process_not_accepting_input">This process is no longer accepting input.</string>
     <string name="vm_unsafe_project_root">Unsafe project root</string>
     <string name="vm_wait_agent_before_build">Wait for the coding agent to finish creating the project before building.</string>
-    <string name="vm_wait_terminal_before_build">Wait for the project terminal command to finish before building.</string>
     <string name="vm_building_debug_apk">Building debug APK…</string>
     <string name="vm_no_android_project">No Android Gradle project found yet. Ask your coding agent to create it, then wait for the task to finish.</string>
     <string name="vm_gradle_build_failed">Gradle build failed (exit code %1$d)</string>
@@ -68,7 +64,6 @@
     <string name="vm_main_chat">Main chat</string>
     <string name="vm_new_chat">New chat</string>
     <string name="vm_task_continues_background">Task continues in the background</string>
-    <string name="vm_terminal_continues_background">Terminal command continues in the background</string>
     <string name="vm_stop_before_new_project">Stop the background task before creating another project</string>
     <string name="vm_starter_web_project">Starter web project</string>
     <string name="vm_language_general">General</string>
@@ -183,8 +178,4 @@
     </plurals>
     <string name="vm_claude_hello">Asking Claude Code to reply…</string>
     <string name="vm_claude_working">Claude subscription works!</string>
-    <string name="ws_terminal_leave_title">Terminal is still running</string>
-    <string name="ws_terminal_leave_body">“%1$s” is still running in the terminal.</string>
-    <string name="ws_terminal_leave_stop">Stop and go back</string>
-    <string name="ws_terminal_leave_keep">Keep running</string>
 </resources>

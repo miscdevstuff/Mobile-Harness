@@ -1,139 +1,66 @@
 <div align="center">
 
-  <img src="assets/readme/logo.svg" alt="Mobile Harness Logo" width="104" height="104" style="border-radius: 24px;" />
+<img src="assets/readme/logo.svg" alt="Mobile Harness Logo" width="96" height="96" />
 
-  # Mobile Harness
+# Mobile Harness
 
-  ### *The complete autonomous AI development workspace for Android.*
+**The autonomous AI development workspace for Android.**
 
-  **Chat with coding agents, edit projects, execute real Linux commands, and preview live web servers — all directly on your phone.**
+Chat with coding agents, edit project files, run an interactive Linux PTY terminal, and preview live web servers directly on your phone.
 
-  <br />
+[![Release v1.0.7](https://img.shields.io/badge/Release-v1.0.7-F28C52?style=flat-square&logo=github&logoColor=white)](https://github.com/techjarves/Mobile-Harness/releases/tag/v1.0.7)
+[![Android 9+](https://img.shields.io/badge/Android-9%2B-3DDC84?style=flat-square&logo=android&logoColor=white)](#system-requirements)
+[![ARM64](https://img.shields.io/badge/Architecture-ARM64-5B8DEF?style=flat-square)](#system-requirements)
+[![MIT License](https://img.shields.io/badge/License-MIT-8B7CF6?style=flat-square&logo=opensourceinitiative&logoColor=white)](LICENSE)
 
-  [![Release v1.0.7](https://img.shields.io/badge/Release-v1.0.7-F28C52?style=flat-square&logo=github&logoColor=white)](https://github.com/techjarves/Mobile-Harness/releases/tag/v1.0.7)
-  [![Android 9+](https://img.shields.io/badge/Android-9%2B-3DDC84?style=flat-square&logo=android&logoColor=white)](#system-requirements)
-  [![ARM64](https://img.shields.io/badge/CPU-ARM64-5B8DEF?style=flat-square)](#system-requirements)
-  [![MIT License](https://img.shields.io/badge/License-MIT-8B7CF6?style=flat-square&logo=opensourceinitiative&logoColor=white)](LICENSE)
-  [![Watch demo](https://img.shields.io/badge/Watch-Demo-FF0000?style=flat-square&logo=youtube&logoColor=white)](https://www.youtube.com/techjarves)
-
-  <br />
-
-  [**Download Online APK**](https://github.com/techjarves/Mobile-Harness/releases/download/v1.0.7/mobile-harness-online-v1.0.7.apk) &nbsp;•&nbsp;
-  [**Download Offline APK**](https://github.com/techjarves/Mobile-Harness/releases/download/v1.0.7/mobile-harness-offline-v1.0.7.apk) &nbsp;•&nbsp;
-  [**Watch Walkthrough (3 min)**](https://youtu.be/QzAau52Z7yQ) &nbsp;•&nbsp;
-  [**Quickstart Guide**](#quickstart) &nbsp;•&nbsp;
-  [**Architecture**](#architecture) &nbsp;•&nbsp;
-  [**Build from Source**](#developer-guides)
+[Download Online APK](https://github.com/techjarves/Mobile-Harness/releases/download/v1.0.7/mobile-harness-online-v1.0.7.apk) ·
+[Download Offline APK](https://github.com/techjarves/Mobile-Harness/releases/download/v1.0.7/mobile-harness-offline-v1.0.7.apk) ·
+[Watch Demo](https://youtu.be/x5T56timmQw) ·
+[Quickstart](#quickstart) ·
+[Architecture](#architecture) ·
+[Build from Source](#developer-guides)
 
 </div>
-
-<br />
 
 ---
 
 <p align="center">
   <a href="https://youtu.be/x5T56timmQw" target="_blank" rel="noopener noreferrer">
-    <img src="https://img.youtube.com/vi/x5T56timmQw/maxresdefault.jpg" alt="Mobile Harness Walkthrough and Live Product Demo" width="920" />
+    <img src="https://img.youtube.com/vi/x5T56timmQw/maxresdefault.jpg" alt="Mobile Harness Product Walkthrough and Demo" width="880" />
   </a>
   <br />
-  <sub>Watch the product walkthrough and demo &nbsp;|&nbsp; <i>Setting up Ubuntu, connecting Claude Code, and building an app on Android</i></sub>
+  <sub>Product walkthrough: provisioning Ubuntu, connecting an agent, and building an app on Android</sub>
 </p>
+
+> [!IMPORTANT]
+> **Environment Security Notice**
+> Mobile Harness runs an unprivileged userspace Linux environment via PRoot on ARM64 Android devices. While isolated from other apps by standard Android sandboxing, PRoot is not a kernel-level VM or hardened security jail. Only run repositories and dependencies you trust.
 
 ---
 
-<br />
+## Download
 
-> [!IMPORTANT]
-> **Environment Security Notice**  
-> Mobile Harness runs on **ARM64 Android devices** using a private userspace PRoot layer. While isolated from other apps via standard Android sandbox permissions, PRoot is not a virtualization boundary or hardened security jail. Only execute projects and dependencies you own or trust.
+Both editions include the full application and support signed in-app updates:
 
-<br />
+| Edition                            |     Size     | Best For                                                                                  |                                                            Download                                                             |
+| :--------------------------------- | :----------: | :---------------------------------------------------------------------------------------- | :-----------------------------------------------------------------------------------------------------------------------------: |
+| **Online Edition** _(Recommended)_ | **89.1 MB**  | Fast initial install; downloads Core, Python, and Android toolchains on demand            |  [Download Online APK](https://github.com/techjarves/Mobile-Harness/releases/download/v1.0.7/mobile-harness-online-v1.0.7.apk)  |
+| **Offline Edition**                | **889.4 MB** | Air-gapped or metered setups; bundles Core, Python, and Android toolchains inside the APK | [Download Offline APK](https://github.com/techjarves/Mobile-Harness/releases/download/v1.0.7/mobile-harness-offline-v1.0.7.apk) |
 
-## Download Mobile Harness
+---
 
-<div align="center">
-  <h3>Choose the edition that fits your setup</h3>
-  <p>Both editions contain the complete Mobile Harness app and support secure in-app updates beginning with v1.0.3.</p>
-</div>
+## Core Capabilities
 
-<table>
-  <tr>
-    <td width="50%" valign="top" align="center">
-      <h3>Online Edition</h3>
-      <p><strong>89.1 MB · Recommended</strong></p>
-      <p>Start with the smaller APK. Core, Python, and Android runtime bundles are downloaded only when needed.</p>
-      <a href="https://github.com/techjarves/Mobile-Harness/releases/download/v1.0.7/mobile-harness-online-v1.0.7.apk">
-        <img src="https://img.shields.io/badge/Download-Online_APK-F28C52?style=for-the-badge&logo=android&logoColor=white" alt="Download Online APK" />
-      </a>
-    </td>
-    <td width="50%" valign="top" align="center">
-      <h3>Offline Edition</h3>
-      <p><strong>889.4 MB · Everything included</strong></p>
-      <p>Includes the Core, Python, and Android runtime bundles for setup with limited or unavailable internet.</p>
-      <a href="https://github.com/techjarves/Mobile-Harness/releases/download/v1.0.7/mobile-harness-offline-v1.0.7.apk">
-        <img src="https://img.shields.io/badge/Download-Offline_APK-5B8DEF?style=for-the-badge&logo=android&logoColor=white" alt="Download Offline APK" />
-      </a>
-    </td>
-  </tr>
-</table>
+- **Autonomous Multi-Agent Coding:** Dedicated, isolated drivers and session persistence for **Claude Code**, **DeepSeek Harness**, **Antigravity CLI**, and **OpenCode**.
+- **Embedded Termux PTY Terminal:** Full VT100/truecolor interactive shell powered by Termux `terminal-emulator` and `terminal-view` (`v0.118.3`) over a 16 KB page-aligned native PTY bridge (`libtermux.so`), featuring a sticky 2×7 Extra Keys bar, pinch-to-zoom, customizable cursor/font settings, and read-only mini terminals for live setup and build logs.
+- **Rootless Ubuntu LTS Subsystem:** Self-contained ARM64 Ubuntu LTS userspace inside PRoot with Git, OpenSSL, GNU coreutils, and Node.js LTS (lazy-loaded NVM) — no root access or external terminal apps required.
+- **On-Device Android APK Builds:** Compile debug APKs directly inside the workspace and pass them straight to Android's package installer without USB or wireless ADB pairing.
+- **Instant Web Preview:** Test local Vite, Next.js, or Express servers inside a sandboxed WebView with console output inspection.
+- **Native File Workflow & Keystore Security:** Browse, edit, search, import, and export files via Android Storage Access Framework (SAF), with API keys encrypted in hardware-backed Android Keystore (AES-256-GCM).
 
-<p align="center">
-  <strong>ARM64 Android 9+</strong><br />
-  <sub>Direct APK installation · No root required · No USB or wireless ADB pairing</sub>
-</p>
+---
 
-<br />
-
-## Capabilities
-
-Mobile Harness unites modern **Jetpack Compose UI** with a self-contained **Ubuntu 20.04 LTS subsystem**. It gives you a desktop-class software development environment in your pocket without requiring root access, unlocked bootloaders, or external applications like Termux.
-
-<table>
-  <tr>
-    <td width="50%" valign="top">
-      <h3>Autonomous Agent Coding</h3>
-      <p>Native integrations with Claude Code, DeepSeek Harness, Antigravity CLI, and OpenCode. Each agent has an isolated driver, settings, and resumable project conversations.</p>
-    </td>
-    <td width="50%" valign="top">
-      <h3>Isolated Linux Subsystem</h3>
-      <p>A full Ubuntu 20.04 ARM64 userspace running inside PRoot. Includes Node.js, npm, Git, OpenSSL, and essential shell tooling out of the box.</p>
-    </td>
-  </tr>
-  <tr>
-    <td width="50%" valign="top">
-      <h3>Instant Web Preview</h3>
-      <p>Spun up a Vite, Next.js, or Express server? Test web interfaces in real-time within a restricted, sandboxed mobile WebView with console telemetry.</p>
-    </td>
-    <td width="50%" valign="top">
-      <h3>Keystore-Grade Encryption</h3>
-      <p>Your API keys and credentials are encrypted using Android Keystore-backed AES-256 GCM. No telemetry, no remote proxies, and zero plain-text leaks.</p>
-    </td>
-  </tr>
-  <tr>
-    <td width="50%" valign="top">
-      <h3>Persistent Project Sessions</h3>
-      <p>Keep projects, chat history, files, and task context together so work can continue across app sessions.</p>
-    </td>
-    <td width="50%" valign="top">
-      <h3>Native File Workflow</h3>
-      <p>Browse, edit, search, and attach files directly from the app interface. Interoperate with system storage via Android Storage Access Framework (SAF).</p>
-    </td>
-  </tr>
-  <tr>
-    <td width="50%" valign="top">
-      <h3>On-device Android Builds</h3>
-      <p>Build, install, and launch Android APKs directly on the phone without USB or wireless ADB pairing.</p>
-    </td>
-    <td width="50%" valign="top">
-      <h3>Optional Toolchains</h3>
-      <p>Add Python, Android, C/C++, and PHP tooling only when a project needs it.</p>
-    </td>
-  </tr>
-</table>
-
-<br />
-
-## Workspace Interface
+## Interface Overview
 
 <table>
   <tr>
@@ -142,40 +69,19 @@ Mobile Harness unites modern **Jetpack Compose UI** with a self-contained **Ubun
     <th width="33%" align="center">Settings</th>
   </tr>
   <tr>
-    <td align="center" valign="top">
-      <img src="assets/readme/projects.png" alt="Projects workspace overview" width="100%" />
-    </td>
-    <td align="center" valign="top">
-      <img src="assets/readme/terminal.png" alt="Linux terminal execution" width="100%" />
-    </td>
-    <td align="center" valign="top">
-      <img src="assets/readme/settings.png" alt="Runtime and provider configuration" width="100%" />
-    </td>
-  </tr>
-  <tr>
-    <td align="center"><sub>Create, organize, and resume isolated workspace sessions.</sub></td>
-    <td align="center"><sub>Execute real Linux commands and scripts with instant output.</sub></td>
-    <td align="center"><sub>Manage AI providers, installed toolchains, themes, and runtime health.</sub></td>
+    <td align="center"><img src="assets/readme/projects.png" alt="Projects workspace screen" width="100%" /></td>
+    <td align="center"><img src="assets/readme/terminal.png" alt="Interactive Linux PTY terminal" width="100%" /></td>
+    <td align="center"><img src="assets/readme/settings.png" alt="Settings and toolchain management" width="100%" /></td>
   </tr>
 </table>
 
-<br />
+---
 
 ## Quickstart
 
-Get up and running in 3 guided steps:
-
-### 1. Download & Install
-Download the latest signed release APK from [GitHub Releases](https://github.com/techjarves/Mobile-Harness/releases/latest).
-
-```text
-Target Architecture : ARM64 (arm64-v8a)
-Package Version     : v1.0.7
-Minimum OS Level    : Android 9.0 (API 28)
-```
-
-### 2. Guided Bootstrap (~10 Minutes)
-Launch the application and follow the interactive setup wizard:
+1. **Install the APK:** Download either the Online or Offline ARM64 APK from [GitHub Releases](https://github.com/techjarves/Mobile-Harness/releases/latest) and install it on an Android 9+ device.
+2. **Complete Guided Setup:** Follow the 3-step onboarding flow to grant background execution permissions, provision the Ubuntu LTS runtime and optional toolchains, and configure your AI provider.
+3. **Create a Project & Build:** Tap **New Project** (or **Quick Project**), describe your task in the workspace chat, and use the **Terminal**, **Files**, or **Preview** tabs alongside the agent.
 
 <table>
   <tr>
@@ -184,265 +90,202 @@ Launch the application and follow the interactive setup wizard:
     <th width="33%" align="center">3 · AI Provider</th>
   </tr>
   <tr>
-    <td align="center" valign="top">
-      <img src="assets/readme/setup-notifications.png" alt="System compatibility check" width="100%" />
-    </td>
-    <td align="center" valign="top">
-      <img src="assets/readme/setup-toolchains.png" alt="Toolchain selection" width="100%" />
-    </td>
-    <td align="center" valign="top">
-      <img src="assets/readme/setup-provider.png" alt="Provider connection" width="100%" />
-    </td>
-  </tr>
-  <tr>
-    <td align="center"><sub>Verifies device storage, CPU architecture, and background service permissions.</sub></td>
-    <td align="center"><sub>Select core Ubuntu runtime and optional development stacks.</sub></td>
-    <td align="center"><sub>Securely store your API keys in Android Keystore.</sub></td>
+    <td align="center"><img src="assets/readme/setup-notifications.png" alt="System readiness step" width="100%" /></td>
+    <td align="center"><img src="assets/readme/setup-toolchains.png" alt="Toolchain selection step" width="100%" /></td>
+    <td align="center"><img src="assets/readme/setup-provider.png" alt="AI provider configuration step" width="100%" /></td>
   </tr>
 </table>
 
-### 3. Create & Build
-1. Tap **New Project** or launch an instant **Quick Project**.
-2. Open the **AI Workspace** and describe what you want to build.
-3. Watch the agent inspect files, draft code, run builds, and launch local web previews.
+---
 
-<br />
+## Coding Agents & Model Providers
 
-## Model Providers
+### Supported Agents
 
-Mobile Harness uses Claude Code's Anthropic-compatible API protocol. You can connect official endpoints or route requests through compatible translation proxies:
-
-| Provider | Integration Type | Streaming | Tool Calling | Status | Notes |
-| :--- | :---: | :---: | :---: | :---: | :--- |
-| **Anthropic API** | Direct Key | Supported | Supported | `Recommended` | Primary supported backend |
-| **OpenCode Zen (Official CLI)** | Official CLI | Supported | Supported | `Supported` | Free (keyless) & paid models via OpenCode v2 CLI |
-| **OpenCode Zen (HTTP API)** | Gateway | Supported | Supported | `Supported` | Paid models via OpenCode Zen HTTP gateway |
-| **OpenRouter** | Gateway | Supported | Supported | `Supported` | Routes compatible models through one API key |
-| **DeepSeek** | Direct Key | Supported | Supported | `Supported` | Anthropic-compatible endpoint |
-| **Kimi** | Direct Key | Supported | Supported | `Supported` | Anthropic-compatible Moonshot endpoint |
-| **NVIDIA NIM** | Gateway | Supported | Supported | `Supported` | OpenAI-compatible models hosted by NVIDIA |
-| **Custom API** | Endpoint Override | Compatible | Compatible | `Experimental` | User-configured gateway |
-
-> [!NOTE]
-> API keys are stored with hardware-backed Android Keystore AES-256-GCM encryption. Antigravity Google OAuth credentials are created and retained only by the official `agy` CLI in its persistent Linux home; Mobile Harness never reads or copies its tokens.
-
-### Coding agents
-
-| Agent | Authentication | Installation | Isolation |
-| :--- | :--- | :--- | :--- |
-| **Claude Code** | Claude account or API-key providers | On demand / Included in Offline | Dedicated Claude bridge and settings |
-| **DeepSeek Harness** | API-key providers | On demand | Dedicated DSH bridge and settings |
-| **Antigravity CLI** | Official Google OAuth flow | Bundled / version-pinned | Dedicated `agy` bridge, model, effort, and conversation IDs |
-| **OpenCode** | Free models (keyless) or API-key providers | Official v2 installer on demand | Dedicated `opencode` v2 standalone bridge and session IDs |
-
-For Antigravity, select **Antigravity CLI**, install it, and tap **Sign in with Google**. Mobile Harness starts the official CLI login, opens the freshly generated Google URL in the system browser, and sends the returned one-time code back to that waiting process. The app does not embed Google login in a WebView and does not construct its own OAuth request.
+| Agent                | Authentication                      | Provisioning                    | Runtime Isolation                               |
+| :------------------- | :---------------------------------- | :------------------------------ | :---------------------------------------------- |
+| **Claude Code**      | Claude account or API-key providers | On demand / Bundled in Offline  | Dedicated bridge, hooks, and settings           |
+| **DeepSeek Harness** | API-key providers                   | On demand                       | Dedicated DSH bridge and settings               |
+| **Antigravity CLI**  | Official Google OAuth browser flow  | Bundled / version-pinned        | Dedicated `agy` bridge, model, and effort state |
+| **OpenCode**         | Free keyless models or API keys     | Official v2 installer on demand | Dedicated `opencode` v2 bridge and session IDs  |
 
 > [!WARNING]
-> Antigravity tasks currently launch with `--dangerously-skip-permissions`. This gives the official agent permission to run tools without individual PocketDev approval prompts. Use it only with projects and prompts you trust. Account quotas and service limits still apply; signing in does not provide unlimited usage.
+> Antigravity tasks currently launch with `--dangerously-skip-permissions`, allowing the CLI to execute tool calls without individual Mobile Harness approval prompts. Use it only in trusted workspaces. Subject to your account's upstream service quotas.
 
-When Android is selected during onboarding, Mobile Harness installs that complete toolchain into its private Ubuntu environment. Android projects can then be built with the workspace play button. The resulting debug APK is passed directly to Android's system package installer and launched after installation; USB debugging, wireless debugging, an ADB port, and a pairing code are not required. Android still requires the user to allow installs from Mobile Harness and confirm each installation.
+### Compatible Model Providers
 
-<br />
+| Provider                | Protocol / Integration | Streaming & Tools | Notes                                        |
+| :---------------------- | :--------------------: | :---------------: | :------------------------------------------- |
+| **Anthropic API**       |       Direct Key       |     Supported     | Primary recommended backend                  |
+| **OpenCode Zen (CLI)**  |      Official CLI      |     Supported     | Supports both free (keyless) and paid models |
+| **OpenCode Zen (HTTP)** |        Gateway         |     Supported     | Paid models via OpenCode Zen HTTP endpoint   |
+| **OpenRouter**          |        Gateway         |     Supported     | Multi-model routing through a single API key |
+| **DeepSeek**            |       Direct Key       |     Supported     | Anthropic-compatible endpoint                |
+| **Kimi**                |       Direct Key       |     Supported     | Anthropic-compatible Moonshot endpoint       |
+| **NVIDIA NIM**          |        Gateway         |     Supported     | OpenAI-compatible models hosted by NVIDIA    |
+| **Custom API**          |   Endpoint Override    |    Compatible     | User-configured gateway URL                  |
+
+> [!NOTE]
+> API keys are encrypted at rest via Android Keystore (AES-256-GCM). Antigravity Google OAuth tokens are managed exclusively by the official `agy` CLI inside the Linux environment and are never read by the Android host.
+
+---
+
+## Optional Development Stacks
+
+Install or remove additional language toolchains anytime from **Settings → Development tools**:
+
+| Stack                             | Included Tooling                                             |
+| :-------------------------------- | :----------------------------------------------------------- |
+| **Web (JavaScript / TypeScript)** | Node.js LTS, npm, npx, Corepack (via lazy-loaded NVM)        |
+| **Python**                        | Python 3, `pip`, `venv`, and native build headers            |
+| **Android (Java / Kotlin)**       | OpenJDK 17 headless runtime, Android SDK build tools, Gradle |
+| **C / C++**                       | `gcc`, `g++`, `clang`, `make`, `cmake`, `gdb`                |
+| **PHP**                           | `php-cli`, Composer, and standard extensions                 |
+| **Godot**                         | Godot 4 ARM64 runtime and MCP integration                    |
+
+---
 
 ## Architecture
 
-Mobile Harness bridges native Android Jetpack Compose to an isolated PRoot Linux execution layer via an optimized C++ JNI bridge:
+Mobile Harness pairs a Jetpack Compose UI and foreground lifecycle service with two native C/C++ JNI bridges (`libpocketspawn.so` for non-interactive agent/build pipelines and 16 KB page-aligned `libtermux.so` for interactive PTY sessions):
 
 ```mermaid
 flowchart TB
-    subgraph Host[" Android Native Host (Kotlin + Jetpack Compose) "]
-        UI["Modern UI Layer<br/>Projects • Chat • Terminal • Web Preview"]
-        Service["Foreground Runtime Service<br/>Process Lifecycle & WakeLocks"]
-        Keystore["Android Keystore<br/>AES-256 GCM Credentials"]
-        Bridge["C++ JNI Process Bridge<br/>Native Launcher & Pipe Multiplexer"]
+    subgraph Android["Android Host (Kotlin + Jetpack Compose)"]
+        UI["UI Layer<br/>Projects · Chat · Termux PTY Terminal · Web Preview"]
+        Service["Foreground Runtime Service<br/>Lifecycle & WakeLocks"]
+        Keystore["Android Keystore<br/>AES-256-GCM Secrets"]
+        JNI["Native C/C++ JNI Bridges<br/>libpocketspawn.so · libtermux.so (16 KB)"]
     end
 
-    subgraph Subsystem[" Private Linux Subsystem (PRoot ARM64) "]
-        Ubuntu["Ubuntu 20.04 LTS Subsystem<br/>Rootless Userspace Environment"]
-        Agent["Agent Registry<br/>Claude • DeepSeek • Antigravity • OpenCode"]
-        Tools["Development Toolchains<br/>Node.js • Git • Python • C++"]
-        Workspace["Local Project Workspace<br/>Files • Git History • Checkpoints"]
+    subgraph Linux["Isolated Linux Subsystem (PRoot ARM64)"]
+        Ubuntu["Ubuntu LTS Rootfs<br/>Rootless Userspace"]
+        Agents["Agent Drivers<br/>Claude · DeepSeek · Antigravity · OpenCode"]
+        Stacks["Toolchains<br/>Node.js · Git · Python · Android SDK · C++"]
+        Files["Project Workspaces<br/>Source Files · Git History"]
     end
 
-    subgraph Cloud[" Model Providers "]
-        Anthropic["Anthropic / API Gateways"]
-        Gateways["Google Antigravity Service"]
+    subgraph Cloud["External Endpoints"]
+        APIs["Anthropic & Compatible Gateways"]
+        Google["Google Antigravity Service"]
     end
 
     UI <--> Service
-    Service <--> Bridge
-    Bridge <--> Subsystem
+    Service <--> JNI
+    JNI <--> Linux
     Keystore -.-> UI
-    Agent <--> Cloud
-    Agent --> Tools
-    Tools <--> Workspace
-    UI -.-> Workspace
-
-    classDef hostStyle fill:#0f172a,stroke:#38bdf8,stroke-width:1.5px,color:#f8fafc;
-    classDef subStyle fill:#1e1b4b,stroke:#818cf8,stroke-width:1.5px,color:#f8fafc;
-    classDef cloudStyle fill:#18181b,stroke:#f59e0b,stroke-width:1.5px,color:#f8fafc;
-
-    class UI,Service,Keystore,Bridge hostStyle;
-    class Ubuntu,Agent,Tools,Workspace subStyle;
-    class Anthropic,Gateways cloudStyle;
+    Agents <--> APIs
+    Agents <--> Google
+    Agents --> Stacks
+    Stacks <--> Files
+    UI -.-> Files
 ```
 
-### Core Runtime Components
-* **Base Environment**: Ubuntu 20.04 ARM64 verified rootfs
-* **Agent Engine**: Registry-selected, isolated drivers for Claude Code, DeepSeek Harness, Antigravity CLI, and OpenCode
-* **Native Tooling**: Node.js LTS, npm, Git, OpenSSL, curl, and GNU coreutils
-* **Process Virtualization**: PRoot user-space architecture emulation with zero kernel modifications
-
-<br />
+---
 
 ## System Requirements
 
-| Metric | Minimum Specification | Recommended Specification |
-| :--- | :--- | :--- |
-| **Operating System** | Android 9.0 (API level 28) | Android 13.0+ (API level 33+) |
-| **CPU Architecture** | 64-bit ARM (`arm64-v8a`) | High-performance 8-Core ARM64 (Snapdragon 8 Gen 1+ / Dimensity) |
-| **RAM** | 4 GB | 8 GB or more |
-| **Free Storage** | 2.5 GB (Base Runtime) | 8.0 GB+ (For multi-language toolchains and build caches) |
-| **Network** | Stable connection for setup & API | High-speed Wi-Fi during initial rootfs provisioning |
-
-<br />
+| Requirement      | Minimum                         | Recommended                                    |
+| :--------------- | :------------------------------ | :--------------------------------------------- |
+| **OS**           | Android 9.0 (API 28)            | Android 13.0+ (API 33+)                        |
+| **CPU**          | 64-bit ARM (`arm64-v8a`)        | 8-core ARM64 (Snapdragon 8 Gen 1+ / Dimensity) |
+| **RAM**          | 4 GB                            | 8 GB+                                          |
+| **Free Storage** | 2.5 GB (Base runtime)           | 8.0 GB+ (Multiple stacks & Gradle caches)      |
+| **Network**      | Required for setup & cloud APIs | High-speed Wi-Fi for initial provisioning      |
 
 ---
 
 ## Developer Guides
 
 <details>
-<summary><b>Building from source (Android Studio & NDK)</b></summary>
-
-<br />
+<summary><b>Building from source</b></summary>
 
 ### Prerequisites
-* **Android Studio**: Ladybug / Hedgehog or newer
-* **Android SDK**: API Level 36 (`compileSdk 36`)
-* **Java Development Kit**: JDK 17 (Eclipse Temurin or OpenJDK)
-* **Android NDK**: `26.1.10909125`
-* **CMake**: `3.22.1`
 
-### Clone & Build Debug APK
+- **Android Studio:** Hedgehog / Ladybug or newer
+- **Android SDK:** `compileSdk 36`
+- **JDK:** JDK 17 (Temurin or OpenJDK)
+- **Android NDK:** `28.2.13676358` (16 KB ELF page alignment)
+- **CMake:** `3.22.1`
+
+### Build & Test Commands
+
 ```bash
-# Clone the repository
 git clone https://github.com/techjarves/Mobile-Harness.git
 cd Mobile-Harness
 
-# Build the standard ARM64 debug binary
-./gradlew assembleDebug
+# Assemble online debug APK
+./gradlew assembleOnlineDebug
 
-# Deploy directly to a connected test device
-adb install -r app/build/outputs/apk/debug/app-debug.apk
+# Install on a connected ARM64 device
+adb install -r app/build/outputs/apk/online/debug/app-online-debug.apk
+
+# Run unit tests and Android Lint
+./gradlew testOnlineDebugUnitTest lintOnlineDebug
 ```
 
-### Quality Assurance & Testing
-```bash
-# Run unit tests
-./gradlew testDebugUnitTest
+### Target SDK Profiles
 
-# Run static analysis linter
-./gradlew lintDebug
-```
-
-### Target Profiles
-* **Direct Sideload APK** (Default): Targets API 28 to preserve proven userspace execution paths under Android 10-14.
-* **Google Play Compliance Build**:
-  ```bash
-  ./gradlew -PplayBuild=true assembleDebug
-  ```
-  Refer to the [Google Play Release Checklist](docs/PLAY_STORE_CHECKLIST.md) for signing and permission policies.
+- **Sideload APK (Default):** Uses `targetSdk = 28` (`untrusted_app_27` SELinux domain) so unpacked PRoot ELF binaries execute directly from the Linux page cache on Android 10–14+.
+- **Google Play Compliance Build:**
+    ```bash
+    ./gradlew -PplayBuild=true assembleOnlineDebug
+    ```
+    See [docs/PLAY_STORE_CHECKLIST.md](docs/PLAY_STORE_CHECKLIST.md) for Play policy requirements.
 
 </details>
 
 <details>
-<summary><b>Optional toolchains and development stacks</b></summary>
-
-<br />
-
-Mobile Harness allows downloading optional developer packs on demand to conserve space:
-
-* **Python Suite**: Python 3.10+, pip, virtualenv, and essential scientific C-extensions.
-* **Android & JVM**: OpenJDK 17 headless runtime and Gradle build tools.
-* **C / C++ Compiler Suite**: GCC/G++, Clang, Make, and CMake for native tool compilation.
-* **PHP Development**: PHP CLI runtime, Composer, and standard database extensions.
-
-> *Note: Kernel-level virtualization technologies such as Docker, KVM, systemd services, and nested hardware emulators are not supported under PRoot.*
-
-</details>
-
-<details>
-<summary><b>Repository directory structure</b></summary>
-
-<br />
+<summary><b>Repository structure</b></summary>
 
 ```text
 Mobile-Harness/
 ├── app/src/main/
+│   ├── cpp/                    # Native spawner (pocket_spawn.c) & 16KB PTY (termux.c)
 │   ├── java/com/jarves/mh/
-│   │   ├── data/       # Preferences, Keystore AES encryption, SQLite persistence
-│   │   ├── model/      # Data entities: Projects, Chats, Files, Tool calls
-│   │   ├── runtime/    # PRoot installer, C++ agent bridge, foreground services
-│   │   └── ui/         # Jetpack Compose screens, Material 3 theme, ViewModels
-│   ├── cpp/            # Native C++ launcher, pseudo-terminal pipe handler
-│   ├── assets/         # Verified rootfs checksums, licenses, base configuration
-│   └── res/            # Android icons, XML drawables, vector assets
-├── fastlane/           # Play Store metadata, graphics, and release automation
-└── docs/               # In-depth architectural notes & Play Store review guides
+│   │   ├── data/               # AppPreferences, Android Keystore AES encryption, JSON storage
+│   │   ├── model/              # Projects, chats, files, providers, and runtime events
+│   │   ├── runtime/            # PRoot installer, agent bridges, foreground services
+│   │   │   └── terminal/       # ManagedTerminalSession & ReadOnlyTerminalSession
+│   │   └── ui/                 # Jetpack Compose screens, TerminalScreen, ReadOnlyMiniTerminal
+│   ├── assets/                 # Checksums, base configurations, third-party licenses
+│   └── res/                    # Drawables, icons, and string resources
+├── docs/                       # Architecture plans, Play Store checklist, and backlog
+└── fastlane/                   # Store metadata and release assets
 ```
 
 </details>
 
 <details>
-<summary><b>Security model and data privacy</b></summary>
+<summary><b>Security & privacy model</b></summary>
 
-<br />
+- **Direct Connections:** Prompts and source code are sent directly from your device to your configured AI provider with no intermediary proxy or telemetry server.
+- **Scoped Storage:** Imports and exports rely on Android's Storage Access Framework (SAF) rather than broad filesystem permissions.
+- **Checksum Verification:** Downloaded rootfs archives and CLI binaries are verified against SHA-256 digests before extraction.
+- **Hardware-Backed Secrets:** API credentials are encrypted using Android Keystore AES-256-GCM.
 
-* **Zero Cloud Intermediaries**: Mobile Harness connects your device directly to your chosen AI endpoint. No intermediate relays or telemetry servers collect your prompts or code.
-* **Scoped Storage**: Project imports and exports utilize Android's official Storage Access Framework (SAF) instead of broad shared storage access.
-* **Cryptographic Checksums**: Root filesystem archives and Claude Code CLI packages are verified via SHA-256 checksums prior to extraction.
-* **Encrypted Secrets**: API tokens are encrypted in hardware-backed storage via Android Keystore.
-
-- ARM64 phones only
-- No hardened isolation for hostile code
-- Terminal input/output currently uses a process bridge rather than a complete PTY emulator; full-screen interactive programs may render incorrectly
-- Background tasks are subject to Android process and battery policies
-- Custom providers may lack Claude-compatible thinking, tool use, token counting, or streaming behavior
-- Large builds can be slow and memory-intensive under PRoot
-- Runtime installation requires a substantial download and free storage
-- Project-specific Android libraries may still be downloaded by Gradle when they are not already in the bundled Maven cache
-
-Read our complete [Privacy Policy](PRIVACY.md).
+Read the full [Privacy Policy](PRIVACY.md).
 
 </details>
 
-Mobile Harness is currently intended for signed direct APK distribution and private testing. Its Android-project workflow requests permission to submit user-built APKs to Android's package installer, which requires a dedicated Google Play policy declaration and approval if distributed through Play.
-
-<br />
+---
 
 ## Current Limitations
 
-* **Architecture**: Exclusively supports 64-bit ARM (`arm64-v8a`) hardware.
-* **Process Isolation**: PRoot maps file systems and IDs in user space; it is not a cryptographically hardened container or VM.
-* **Terminal Emulation**: The process bridge handles standard CLI workflows and REPLs; specialized ncurses applications may experience minor layout artifacts.
-* **OS Process Management**: Heavy compilation workloads may be throttled if Android applies aggressive battery optimization. It is recommended to exempt Mobile Harness from battery optimization in device settings.
+- **Hardware & OS:** Supports `arm64-v8a` Android devices only; kernel-level features such as Docker, KVM, `systemd`, and nested hardware emulators are unavailable under PRoot.
+- **Process Sandboxing:** PRoot translates filesystem paths and UIDs in user space and is not a cryptographically isolated container.
+- **Background Throttling:** Aggressive OEM battery savers may throttle long builds unless Mobile Harness is exempted from battery optimization.
+- **Gradle Dependencies:** First-time Android project builds may download external Maven artifacts if not already cached.
 
-<br />
+---
 
-## Legal & Trademarks
+## Legal & License
 
-* Mobile Harness is an independent open-source project and is not affiliated with, endorsed by, or sponsored by Anthropic.
-* **Claude** and **Claude Code** are trademarks of Anthropic, PBC. Claude Code CLI is downloaded directly from Anthropic's official distribution endpoints during setup and remains governed by Anthropic's license terms.
-* Ubuntu, Android, Kotlin, Node.js, Git, and other registered trademarks belong to their respective copyright holders.
-* Third-party open-source licenses are compiled in [`app/src/main/assets/licenses`](app/src/main/assets/licenses).
-
-<br />
-
-## License
-
-This project is licensed under the [MIT License](LICENSE). Third-party runtime binaries and packages remain governed by their respective upstream licenses.
-
-<br />
+- Mobile Harness is an independent open-source project and is not affiliated with, endorsed by, or sponsored by Anthropic.
+- **Claude** and **Claude Code** are trademarks of Anthropic, PBC. Ubuntu, Android, Kotlin, Node.js, Git, and Termux belong to their respective owners.
+- Third-party licenses are bundled in [`app/src/main/assets/licenses`](app/src/main/assets/licenses).
+- Licensed under the [MIT License](LICENSE).
+- This project is licensed under the [MIT License](LICENSE). Third-party runtime binaries and packages remain governed by their respective upstream licenses.
 
 ---
 

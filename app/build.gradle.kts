@@ -164,8 +164,11 @@ android {
             version = "3.22.1"
         }
     }
-    packaging.resources.excludes += "/META-INF/{AL2.0,LGPL2.1}"
-    packaging.jniLibs.useLegacyPackaging = true
+    packaging {
+        resources.excludes += "/META-INF/{AL2.0,LGPL2.1}"
+        jniLibs.useLegacyPackaging = true
+        jniLibs.pickFirsts += "**/libtermux.so"
+    }
     androidResources.noCompress += "zst"
 }
 
@@ -213,6 +216,8 @@ dependencies {
     implementation("com.github.luben:zstd-jni:1.5.7-12@aar")
     implementation("com.mikepenz:multiplatform-markdown-renderer-m3:0.32.0")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    implementation("com.github.termux.termux-app:terminal-emulator:v0.118.3")
+    implementation("com.github.termux.termux-app:terminal-view:v0.118.3")
 
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.json:json:20250107")

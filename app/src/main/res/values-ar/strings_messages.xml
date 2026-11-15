@@ -9,13 +9,9 @@
     <string name="vm_process_exited_code">انتهت العملية بالرمز %1$d</string>
     <string name="vm_error_with_message">خطأ: %1$s</string>
     <string name="vm_android_tools_missing">أدوات بناء Android غير مثبتة. أضف Android من الإعدادات ← حزم التطوير.</string>
-    <string name="vm_terminal_error">خطأ في الطرفية: %1$s</string>
     <string name="vm_project_unavailable">المشروع لم يعد متاحاً.</string>
-    <string name="vm_unsupported_terminal_process">عملية طرفية غير مدعومة.</string>
-    <string name="vm_process_not_accepting_input">لم تعد هذه العملية تقبل الإدخال.</string>
     <string name="vm_unsafe_project_root">جذر مشروع غير آمن</string>
     <string name="vm_wait_agent_before_build">انتظر حتى ينتهي Claude من إنشاء المشروع قبل البناء.</string>
-    <string name="vm_wait_terminal_before_build">انتظر حتى ينتهي أمر طرفية المشروع قبل البناء.</string>
     <string name="vm_building_debug_apk">جارٍ بناء APK للتصحيح…</string>
     <string name="vm_no_android_project">لم يُعثر على مشروع Android Gradle بعد. اطلب من Claude إنشاءه، ثم انتظر انتهاء المهمة.</string>
     <string name="vm_gradle_build_failed">فشل بناء Gradle (رمز الخروج %1$d)</string>
@@ -68,7 +64,6 @@
     <string name="vm_main_chat">المحادثة الرئيسية</string>
     <string name="vm_new_chat">محادثة جديدة</string>
     <string name="vm_task_continues_background">تستمر المهمة في الخلفية</string>
-    <string name="vm_terminal_continues_background">يستمر أمر الطرفية في الخلفية</string>
     <string name="vm_stop_before_new_project">أوقف المهمة الجارية في الخلفية قبل إنشاء مشروع آخر</string>
     <string name="vm_starter_web_project">مشروع ويب مبدئي</string>
     <string name="vm_language_general">عام</string>
@@ -195,8 +190,4 @@
     </plurals>
     <string name="vm_claude_hello">جارٍ طلب رد من Claude Code…</string>
     <string name="vm_claude_working">اشتراك Claude يعمل!</string>
-    <string name="ws_terminal_leave_title">الطرفية لا تزال تعمل</string>
-    <string name="ws_terminal_leave_body">‏«%1$s» لا يزال يعمل في الطرفية.</string>
-    <string name="ws_terminal_leave_stop">إيقاف والرجوع</string>
-    <string name="ws_terminal_leave_keep">متابعة التشغيل</string>
 </resources>

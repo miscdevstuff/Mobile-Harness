@@ -23,16 +23,9 @@
     <string name="ws_stack_desc_android">Java and Kotlin build tools</string>
     <string name="ws_stack_desc_cpp">Native apps and command-line tools</string>
     <string name="ws_stack_desc_php">PHP sites and Laravel projects</string>
-    <string name="ws_terminal_linux_title">Linux Terminal</string>
-    <string name="ws_terminal_linux_subtitle">Ubuntu 20.04 · PRoot Sandbox</string>
+    <string name="ws_terminal_linux_title">Terminal</string>
+    <string name="ws_terminal_linux_subtitle">/workspace</string>
     <string name="ws_terminal_clear_output">Clear output</string>
-    <string name="ws_terminal_previous_command">Previous command</string>
-    <string name="ws_terminal_next_command">Next command</string>
-    <string name="ws_terminal_cursor_left">Move cursor left</string>
-    <string name="ws_terminal_cursor_right">Move cursor right</string>
-    <string name="ws_terminal_alt_modifier">Alt modifier</string>
-    <string name="ws_terminal_escape">Escape</string>
-    <string name="ws_terminal_ctrl_modifier">Control modifier; press C to interrupt</string>
     <string name="ws_md_code_label">code</string>
     <string name="ws_md_run_in_terminal">Run in project terminal</string>
     <string name="ws_md_copy_code">Copy code</string>
@@ -91,7 +84,6 @@
     <string name="ws_later">Later</string>
     <string name="ws_ping_api">Ping API</string>
     <string name="ws_task_running">Task running</string>
-    <string name="ws_terminal_running">Terminal running</string>
     <string name="ws_project_options">Project options</string>
     <string name="ws_rename_project">Rename project</string>
     <string name="ws_delete_project">Delete project</string>
@@ -100,9 +92,6 @@
     <string name="ws_history">History</string>
     <string name="ws_project_chats">Project chats</string>
     <string name="ws_allow_app_installs">Allow app installs to run Android projects</string>
-    <string name="ws_destructive_title">Run potentially destructive command?</string>
-    <string name="ws_destructive_desc">This command can delete files, rewrite Git history, or change the project significantly.</string>
-    <string name="ws_run_anyway">Run anyway</string>
     <string name="ws_build_run_android">Build and run Android app</string>
     <string name="ws_new_chat">New chat</string>
     <string name="ws_finish_task_before_switch">Finish the running task before switching chats.</string>
@@ -158,4 +147,5 @@
     <string name="ws_preview_external_blocked">External navigation is blocked in project preview</string>
     <string name="ws_open_url">Open URL</string>
     <string name="ws_refresh_preview">Refresh preview</string>
+    <string name="ws_terminal_new_session">New session</string>
 </resources>

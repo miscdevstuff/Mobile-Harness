@@ -68,8 +68,6 @@
     <string name="runtime_environment">Environment</string>
     <string name="runtime_active_agent">Active agent</string>
     <string name="runtime_installed_agents">Installed agents</string>
-    <string name="runtime_clear_history">Clear terminal history</string>
-    <string name="runtime_history_cleared">Terminal history cleared</string>
     <string name="runtime_advanced_reliability">Advanced runtime reliability</string>
 
     <!-- Provider & Connection -->

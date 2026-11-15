@@ -399,7 +399,6 @@ fun PocketDevApp(viewModel: MainViewModel = viewModel()) {
         state.activeProject != null && state.workspaceVisible -> WorkspaceScreen(
             state = state,
             viewModel = viewModel,
-            projectTerminalLiveOutputFlow = viewModel.projectTerminalLiveOutput,
             androidBuildLogFlow = viewModel.androidBuildLog,
             androidLogcatFlow = viewModel.androidLogcat,
             onBack = viewModel::closeProject,
@@ -426,16 +425,8 @@ fun PocketDevApp(viewModel: MainViewModel = viewModel()) {
             onDismissFileConflict = viewModel::dismissFileConflict,
             onCreateChat = viewModel::createChat,
             onSwitchChat = viewModel::switchChat,
-            onTerminalRun = viewModel::requestProjectTerminalCommand,
-            onTerminalInput = viewModel::sendProjectTerminalInput,
-            onTerminalInterrupt = viewModel::interruptProjectTerminalCommand,
-            onTerminalPrepare = viewModel::prepareProjectTerminalCommand,
-            onTerminalDraftConsumed = viewModel::consumeProjectTerminalDraft,
             onTerminalOpened = viewModel::openProjectTerminal,
-            onTerminalStop = viewModel::stopProjectTerminalCommand,
-            onTerminalClear = viewModel::clearProjectTerminal,
-            onTerminalConfirm = viewModel::confirmProjectTerminalCommand,
-            onTerminalCancel = viewModel::cancelProjectTerminalCommand,
+            onPasteInTerminal = viewModel::pasteCommandInProjectTerminal,
             onUseSuggestedProjectRoot = viewModel::useSuggestedProjectRoot,
             onExportProject = viewModel::exportActiveProject,
             onAddAttachments = viewModel::addChatAttachments,
@@ -2097,96 +2088,14 @@ private fun StartupLoadingScreen(
 
 @Composable
 private fun SetupLogPanel(logs: List<String>) {
-    var expanded by rememberSaveable { mutableStateOf(false) }
-    var followLatest by rememberSaveable { mutableStateOf(true) }
-    val scrollState = rememberScrollState()
-    val scope = rememberCoroutineScope()
-
-    LaunchedEffect(logs.size, logs.lastOrNull()) {
-        if (expanded && followLatest) {
-            delay(20)
-            scrollState.animateScrollTo(scrollState.maxValue)
-        }
-    }
-    LaunchedEffect(scrollState.isScrollInProgress) {
-        if (!scrollState.isScrollInProgress && expanded) {
-            followLatest = scrollState.maxValue - scrollState.value < 32
-        }
-    }
-
-    Surface(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable { expanded = !expanded },
-        color = MaterialTheme.colorScheme.surface,
-        shape = RoundedCornerShape(18.dp),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-    ) {
-        Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(
-                    Icons.Default.Terminal,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.size(18.dp),
-                )
-                Spacer(Modifier.width(8.dp))
-                Text(
-                    text = if (expanded) stringResource(R.string.setup_live_terminal) else localizeRuntimeMessage(logs.lastOrNull().orEmpty()),
-                    modifier = Modifier.weight(1f),
-                    fontFamily = FontFamily.Monospace,
-                    fontSize = 11.sp,
-                    color = MaterialTheme.colorScheme.onSurface,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                Icon(
-                    if (expanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
-                    contentDescription = if (expanded) stringResource(R.string.ws_setup_collapse_details) else stringResource(R.string.ws_setup_expand_details),
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-
-            if (expanded) {
-                HorizontalDivider(
-                    modifier = Modifier.padding(vertical = 8.dp),
-                    color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
-                )
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .heightIn(max = 170.dp)
-                        .verticalScroll(scrollState),
-                    verticalArrangement = Arrangement.spacedBy(5.dp),
-                ) {
-                    logs.forEach { line ->
-                        Text(
-                            text = localizeRuntimeMessage(line),
-                            fontFamily = FontFamily.Monospace,
-                            fontSize = 11.sp,
-                            lineHeight = 16.sp,
-                            color = MaterialTheme.colorScheme.onSurface,
-                        )
-                    }
-                    Text(
-                        text = "▌",
-                        fontFamily = FontFamily.Monospace,
-                        fontSize = 11.sp,
-                        color = MaterialTheme.colorScheme.primary,
-                    )
-                }
-                if (!followLatest) {
-                    TextButton(
-                        onClick = {
-                            followLatest = true
-                            scope.launch { scrollState.animateScrollTo(scrollState.maxValue) }
-                        },
-                        modifier = Modifier.align(Alignment.End),
-                    ) { Text(stringResource(R.string.ws_jump_to_latest)) }
-                }
-            }
-        }
-    }
+    ReadOnlyMiniTerminal(
+        output = logs.joinToString("\n"),
+        title = "Live setup terminal",
+        isRunning = true,
+        height = 180.dp,
+        collapsible = true,
+        initiallyExpanded = true,
+    )
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -2318,7 +2227,10 @@ private fun RootScreenHost(
         floatingActionButton = {
             if (screen == RootScreen.PROJECTS && !keyboardVisible && !showQuickTerminal) {
                 ExtendedFloatingActionButton(
-                    onClick = { showQuickTerminal = true },
+                    onClick = {
+                        viewModel.openQuickTerminal()
+                        showQuickTerminal = true
+                    },
                     icon = { Icon(Icons.Default.Terminal, contentDescription = null) },
                     text = { Text(stringResource(R.string.projects_terminal), fontWeight = FontWeight.SemiBold) },
                     containerColor = MaterialTheme.colorScheme.primary,
@@ -2376,7 +2288,6 @@ private fun RootScreenHost(
                     diagnosticsFlow = viewModel.diagnostics,
                     onSetThemeMode = viewModel::setThemeMode,
                     onSetLanguage = viewModel::setLanguage,
-                    onClearTerminal = viewModel::clearTerminal,
                     onInstallDevStack = viewModel::installDevStack,
                     onRemoveDevStack = viewModel::removeDevStack,
                     onCheckHostRuntimeUpdate = viewModel::checkHostRuntimeUpdate,
@@ -2393,27 +2304,13 @@ private fun RootScreenHost(
         }
     }
     if (showQuickTerminal) {
-        val terminalLines by viewModel.terminalLines.collectAsStateWithLifecycle()
-        val isTerminalRunning by viewModel.isTerminalRunning.collectAsStateWithLifecycle()
-        val terminalLiveOutput by viewModel.terminalLiveOutput.collectAsStateWithLifecycle()
-        val terminalCurrentCommand by viewModel.terminalCurrentCommand.collectAsStateWithLifecycle()
         QuickTerminalSheet(
             onDismiss = { showQuickTerminal = false },
         ) {
             TerminalScreen(
-                lines = terminalLines,
-                isRunning = isTerminalRunning,
-                onRun = viewModel::runTerminalCommand,
-                onInput = viewModel::sendTerminalInput,
-                onInterrupt = viewModel::interruptTerminalCommand,
-                onClear = viewModel::clearTerminal,
-                onToggleTheme = viewModel::toggleTheme,
-                themeMode = state.themeMode,
-                liveOutput = terminalLiveOutput,
-                currentCommand = terminalCurrentCommand,
-                showThemeAction = false,
-                showQuickCommands = true,
+                terminalSession = viewModel.quickTerminalSession,
                 compactHeader = true,
+                applyImePadding = false,
             )
         }
     }
@@ -2424,15 +2321,11 @@ private fun QuickTerminalSheet(
     onDismiss: () -> Unit,
     content: @Composable () -> Unit,
 ) {
-    var sheetFraction by rememberSaveable { mutableFloatStateOf(0.60f) }
+    var sheetFraction by rememberSaveable { mutableFloatStateOf(0.75f) }
     BackHandler(onBack = onDismiss)
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val density = LocalDensity.current
         val maxHeightPx = with(density) { maxHeight.toPx() }
-        val keyboardVisible = WindowInsets.ime.getBottom(density) > 0
-        LaunchedEffect(keyboardVisible) {
-            if (keyboardVisible) sheetFraction = 0.85f
-        }
         val dragState = rememberDraggableState { dragAmount ->
             sheetFraction = (sheetFraction - dragAmount / maxHeightPx)
                 .coerceIn(0.40f, 0.85f)
@@ -3584,7 +3477,7 @@ private fun ProjectsScreen(
                     ProjectCard(
                         project = project,
                         taskRunning = state.isRunning && state.activeProject?.id == project.id,
-                        terminalRunning = state.projectTerminalRunning && state.activeProject?.id == project.id,
+                        terminalRunning = false,
                         buildRunning = state.androidBuildRunning && state.activeProject?.id == project.id,
                         onOpen = { onOpen(project) },
                         onRename = { onRenameProject(project.id, it) },
@@ -3913,7 +3806,7 @@ private fun ProjectCard(
                             when {
                                 taskRunning -> stringResource(R.string.ws_task_running)
                                 buildRunning -> stringResource(R.string.an_android_build)
-                                else -> stringResource(R.string.ws_terminal_running)
+                                else -> stringResource(R.string.ws_task_running)
                             },
                             color = MaterialTheme.colorScheme.primary,
                             fontSize = 10.sp,
@@ -4045,7 +3938,7 @@ private fun ReadOnlyProjectScreen(
                 onOpenAttachment = {},
                 onRunInTerminal = {},
                 readOnly = true,
-                readOnlyBlocked = state.isRunning || state.projectTerminalRunning,
+                readOnlyBlocked = state.isRunning,
                 onContinueHere = onContinueHere,
             )
         }
@@ -4057,7 +3950,6 @@ private fun ReadOnlyProjectScreen(
 private fun WorkspaceScreen(
     state: AppUiState,
     viewModel: MainViewModel,
-    projectTerminalLiveOutputFlow: kotlinx.coroutines.flow.StateFlow<String>,
     androidBuildLogFlow: kotlinx.coroutines.flow.StateFlow<String>,
     androidLogcatFlow: kotlinx.coroutines.flow.StateFlow<com.jarves.mh.runtime.AndroidLogcatState>,
     onBack: () -> Unit,
@@ -4084,16 +3976,8 @@ private fun WorkspaceScreen(
     onDismissFileConflict: () -> Unit,
     onCreateChat: () -> Unit,
     onSwitchChat: (String) -> Unit,
-    onTerminalRun: (String) -> Unit,
-    onTerminalInput: (String) -> Unit,
-    onTerminalInterrupt: () -> Unit,
-    onTerminalPrepare: (String) -> Unit,
-    onTerminalDraftConsumed: () -> Unit,
     onTerminalOpened: () -> Unit,
-    onTerminalStop: () -> Unit,
-    onTerminalClear: () -> Unit,
-    onTerminalConfirm: () -> Unit,
-    onTerminalCancel: () -> Unit,
+    onPasteInTerminal: (String) -> Unit,
     onUseSuggestedProjectRoot: () -> Unit,
     onExportProject: (Uri, ExportSelection) -> Unit,
     onAddAttachments: (List<Uri>) -> Unit,
@@ -4120,42 +4004,8 @@ private fun WorkspaceScreen(
     onCleanAndroid: () -> Unit,
     onInstallAndroidTools: () -> Unit,
 ) {
-    // Leaving while a terminal command runs asks whether to stop it or keep it running.
-    var confirmLeaveTerminal by rememberSaveable { mutableStateOf(false) }
-    val requestBack: () -> Unit = {
-        if (state.projectTerminalRunning) confirmLeaveTerminal = true else onBack()
-    }
+    val requestBack: () -> Unit = onBack
     BackHandler(onBack = requestBack)
-    if (confirmLeaveTerminal) {
-        AlertDialog(
-            onDismissRequest = { confirmLeaveTerminal = false },
-            title = { Text(stringResource(R.string.ws_terminal_leave_title)) },
-            text = {
-                Text(
-                    stringResource(
-                        R.string.ws_terminal_leave_body,
-                        state.projectTerminalCommand ?: stringResource(R.string.workspace_project_terminal),
-                    ),
-                )
-            },
-            confirmButton = {
-                TextButton(onClick = {
-                    confirmLeaveTerminal = false
-                    onTerminalStop()
-                    onBack()
-                }) { Text(stringResource(R.string.ws_terminal_leave_stop)) }
-            },
-            dismissButton = {
-                Row {
-                    TextButton(onClick = { confirmLeaveTerminal = false }) { Text(stringResource(R.string.cancel)) }
-                    TextButton(onClick = {
-                        confirmLeaveTerminal = false
-                        onBack()
-                    }) { Text(stringResource(R.string.ws_terminal_leave_keep)) }
-                }
-            },
-        )
-    }
     val context = LocalContext.current
     val isAndroidProject = state.androidProjectDetected
     val keyboardVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
@@ -4316,7 +4166,7 @@ private fun WorkspaceScreen(
     if (state.openedFile != null) {
         FileViewerScreen(
             file = state.openedFile,
-            editingAllowed = !state.isRunning && !state.projectTerminalRunning && !state.androidBuildRunning,
+            editingAllowed = !state.isRunning && !state.androidBuildRunning,
             onClose = {
                 onCloseFile()
                 selectedTab = WorkspaceTab.FILES
@@ -4382,28 +4232,6 @@ private fun WorkspaceScreen(
             onTestServer = viewModel::testMcpServerConnection,
         )
     }
-    state.pendingTerminalCommand?.let { command ->
-        AlertDialog(
-            onDismissRequest = onTerminalCancel,
-            icon = { Icon(Icons.Default.Warning, contentDescription = null, tint = MaterialTheme.colorScheme.error) },
-            title = { Text(stringResource(R.string.ws_destructive_title)) },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Text(stringResource(R.string.ws_destructive_desc))
-                    Surface(color = Color(0xFF14171E), shape = RoundedCornerShape(8.dp)) {
-                        Text(
-                            command,
-                            Modifier.fillMaxWidth().padding(10.dp),
-                            fontFamily = FontFamily.Monospace,
-                            color = Color(0xFFE2E8F0),
-                        )
-                    }
-                }
-            },
-            confirmButton = { Button(onClick = onTerminalConfirm) { Text(stringResource(R.string.ws_run_anyway)) } },
-            dismissButton = { TextButton(onClick = onTerminalCancel) { Text(stringResource(R.string.action_cancel)) } },
-        )
-    }
     Scaffold(
         topBar = {
             TopAppBar(
@@ -4436,7 +4264,7 @@ private fun WorkspaceScreen(
                     if (isAndroidProject) {
                         IconButton(
                             onClick = { showAndroidBuild = true },
-                            enabled = !state.isRunning && !state.projectTerminalRunning,
+                            enabled = !state.isRunning,
                         ) {
                             if (state.androidBuildRunning) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
                             else Icon(Icons.Default.PlayArrow, stringResource(R.string.ws_build_run_android))
@@ -4578,8 +4406,7 @@ private fun WorkspaceScreen(
                     onOpenAttachment = onOpenAttachment,
                     onRunInTerminal = { command ->
                         selectedTab = WorkspaceTab.TERMINAL
-                        onTerminalOpened()
-                        onTerminalPrepare(command)
+                        onPasteInTerminal(command)
                     },
                     queuedFollowUps = state.queuedFollowUps,
                     onSteerFollowUp = onSteerFollowUp,
@@ -4596,7 +4423,7 @@ private fun WorkspaceScreen(
                     selectionMode = exportSelectionMode,
                     exportSelection = exportSelection,
                     exportRunning = state.projectExportRunning,
-                    exportEnabled = !state.isRunning && !state.projectTerminalRunning && !state.androidBuildRunning,
+                    exportEnabled = !state.isRunning && !state.androidBuildRunning,
                     onEnterSelection = {
                         exportSelection = ExportSelection()
                         exportSelectionMode = true
@@ -4610,7 +4437,7 @@ private fun WorkspaceScreen(
                     onDownloadSelection = {
                         exportProjectLauncher.launch("${state.activeProject?.slug ?: "project"}.zip")
                     },
-                    fileOpsEnabled = !state.isRunning && !state.projectTerminalRunning &&
+                    fileOpsEnabled = !state.isRunning &&
                         !state.androidBuildRunning && !state.projectExportRunning,
                     onCreateEntry = onCreateWorkspaceEntry,
                     onRenameEntry = onRenameWorkspaceEntry,
@@ -4626,27 +4453,11 @@ private fun WorkspaceScreen(
                     },
                 )
                 WorkspaceTab.TERMINAL -> {
-                    val projectTerminalLiveOutput by projectTerminalLiveOutputFlow.collectAsStateWithLifecycle()
+                    LaunchedEffect(state.activeProject?.id) { onTerminalOpened() }
                     TerminalScreen(
-                        lines = state.projectTerminalLines,
-                        isRunning = state.projectTerminalRunning,
-                        onRun = onTerminalRun,
-                        onInput = onTerminalInput,
-                        onInterrupt = onTerminalInterrupt,
-                        onClear = onTerminalClear,
-                        onToggleTheme = {},
-                        themeMode = state.themeMode,
-                        title = stringResource(R.string.workspace_project_terminal),
-                        subtitle = "${state.projectTerminalCwd} · Ubuntu PRoot",
-                        liveOutput = projectTerminalLiveOutput,
-                        currentCommand = state.projectTerminalCommand,
-                        commandDraft = state.projectTerminalDraft,
-                        onCommandDraftConsumed = onTerminalDraftConsumed,
-                        promptPath = state.projectTerminalCwd,
-                        onStop = onTerminalStop,
-                        showThemeAction = false,
-                        showQuickCommands = false,
+                        terminalSession = viewModel.projectTerminalSession,
                         compactHeader = true,
+                        applyImePadding = true,
                     )
                 }
                 WorkspaceTab.PREVIEW -> PreviewTab(state.previewReady, state.previewUrl)

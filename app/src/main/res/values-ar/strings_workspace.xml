@@ -26,13 +26,6 @@
     <string name="ws_terminal_linux_title">طرفية Linux</string>
     <string name="ws_terminal_linux_subtitle">Ubuntu 20.04 · بيئة PRoot المعزولة</string>
     <string name="ws_terminal_clear_output">مسح المخرجات</string>
-    <string name="ws_terminal_previous_command">الأمر السابق</string>
-    <string name="ws_terminal_next_command">الأمر التالي</string>
-    <string name="ws_terminal_cursor_left">تحريك المؤشر لليسار</string>
-    <string name="ws_terminal_cursor_right">تحريك المؤشر لليمين</string>
-    <string name="ws_terminal_alt_modifier">مفتاح التعديل Alt</string>
-    <string name="ws_terminal_escape">الخروج (Esc)</string>
-    <string name="ws_terminal_ctrl_modifier">مفتاح التعديل Control؛ اضغط C للمقاطعة</string>
     <string name="ws_md_code_label">كود</string>
     <string name="ws_md_run_in_terminal">تشغيل في طرفية المشروع</string>
     <string name="ws_md_copy_code">نسخ الكود</string>
@@ -91,7 +84,6 @@
     <string name="ws_later">لاحقًا</string>
     <string name="ws_ping_api">اختبار API</string>
     <string name="ws_task_running">مهمة قيد التشغيل</string>
-    <string name="ws_terminal_running">الطرفية قيد التشغيل</string>
     <string name="ws_project_options">خيارات المشروع</string>
     <string name="ws_rename_project">إعادة تسمية المشروع</string>
     <string name="ws_delete_project">حذف المشروع</string>
@@ -100,9 +92,6 @@
     <string name="ws_history">السجل</string>
     <string name="ws_project_chats">محادثات المشروع</string>
     <string name="ws_allow_app_installs">اسمح بتثبيت التطبيقات لتشغيل مشاريع Android</string>
-    <string name="ws_destructive_title">هل تريد تشغيل أمر قد يكون مدمرًا؟</string>
-    <string name="ws_destructive_desc">يمكن لهذا الأمر حذف الملفات أو إعادة كتابة سجل Git أو تغيير المشروع بشكل كبير.</string>
-    <string name="ws_run_anyway">تشغيل على أي حال</string>
     <string name="ws_build_run_android">بناء تطبيق Android وتشغيله</string>
     <string name="ws_new_chat">محادثة جديدة</string>
     <string name="ws_finish_task_before_switch">أكمل المهمة الجارية قبل التبديل بين المحادثات.</string>
@@ -158,4 +147,5 @@
     <string name="ws_preview_external_blocked">التنقل الخارجي محظور في معاينة المشروع</string>
     <string name="ws_open_url">فتح الرابط</string>
     <string name="ws_refresh_preview">تحديث المعاينة</string>
+    <string name="ws_terminal_new_session">New session</string>
 </resources>

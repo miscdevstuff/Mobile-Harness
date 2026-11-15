@@ -9,13 +9,9 @@
     <string name="vm_process_exited_code">El proceso terminó con el código %1$d</string>
     <string name="vm_error_with_message">Error: %1$s</string>
     <string name="vm_android_tools_missing">Las herramientas de compilación de Android no están instaladas. Añade Android en Ajustes → Entornos de desarrollo.</string>
-    <string name="vm_terminal_error">Error del terminal: %1$s</string>
     <string name="vm_project_unavailable">El proyecto ya no está disponible.</string>
-    <string name="vm_unsupported_terminal_process">Proceso de terminal no compatible.</string>
-    <string name="vm_process_not_accepting_input">Este proceso ya no acepta entradas.</string>
     <string name="vm_unsafe_project_root">Raíz del proyecto no segura</string>
     <string name="vm_wait_agent_before_build">Espera a que Claude termine de crear el proyecto antes de compilar.</string>
-    <string name="vm_wait_terminal_before_build">Espera a que termine el comando del terminal del proyecto antes de compilar.</string>
     <string name="vm_building_debug_apk">Compilando APK de depuración…</string>
     <string name="vm_no_android_project">Aún no se encontró ningún proyecto Android Gradle. Pide a Claude que lo cree y espera a que termine la tarea.</string>
     <string name="vm_gradle_build_failed">La compilación de Gradle falló (código de salida %1$d)</string>
@@ -68,7 +64,6 @@
     <string name="vm_main_chat">Chat principal</string>
     <string name="vm_new_chat">Nuevo chat</string>
     <string name="vm_task_continues_background">La tarea continúa en segundo plano</string>
-    <string name="vm_terminal_continues_background">El comando de terminal continúa en segundo plano</string>
     <string name="vm_stop_before_new_project">Detén la tarea en segundo plano antes de crear otro proyecto</string>
     <string name="vm_starter_web_project">Proyecto web inicial</string>
     <string name="vm_language_general">General</string>
@@ -186,8 +181,4 @@
     </plurals>
     <string name="vm_claude_hello">Pidiendo a Claude Code que responda…</string>
     <string name="vm_claude_working">¡La suscripción de Claude funciona!</string>
-    <string name="ws_terminal_leave_title">La terminal sigue en ejecución</string>
-    <string name="ws_terminal_leave_body">«%1$s» sigue ejecutándose en la terminal.</string>
-    <string name="ws_terminal_leave_stop">Detener y volver</string>
-    <string name="ws_terminal_leave_keep">Seguir ejecutando</string>
 </resources>

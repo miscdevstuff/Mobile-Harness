@@ -121,7 +121,7 @@ fi
 EOF_NVM_SH
             chmod 644 /etc/profile.d/nvm.sh
             set +e
-            \. /etc/profile.d/nvm.sh
+            \. "${'$'}NVM_DIR/nvm.sh"
             nvm install --lts
             nvm_rc=${'$'}?
             if [ ${'$'}nvm_rc -ne 0 ]; then
@@ -149,6 +149,7 @@ EOF_NVM_SH
             onProgress = onProgress,
             failureMessage = str(R.string.rt_install_verify_failed, "Node.js"),
         )
+        File(rootfs, "etc/profile.d/nvm.sh").writeText(HostRuntimeInstaller.LAZY_NVM_PROFILE_SH)
         hostInstaller.verifyGuest(
             "nvm --version && node -v && npm -v",
             str(R.string.rt_install_verify_failed, "Node.js"),
